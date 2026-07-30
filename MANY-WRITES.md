@@ -15,38 +15,34 @@ and turns it into exactly one Heavy Secure SEC2/Booter run.
 
 ## Capacity
 
-The current DMEM layout supports at most 100 entries:
+The same-Booter DMEM layout requires exactly 88 writer entries:
 
 ```c
-#define SEC2_POSTBL_TIMING_MULTIWRITE_MAX_WRITES 100U
+#define SEC2_POSTBL_TIMING_MULTIWRITE_MAX_WRITES 88U
 ```
 
-The compute/memory unlock uses nine of them:
+The fixed path uses ten slots:
 
 1. four PLM writes,
 2. two compute overrides,
 3. two device-specific memory values,
-4. one final completion marker.
+4. one Booter pre-image-start gate clear,
+5. one final completion marker.
 
-This leaves 91 additional slots. Append new entries to `writes[]` immediately
-before the marker:
+This leaves 78 padding slots available for additional writes. Append them
+after the handoff-gate write and before the padding loop:
 
 ```c
-SEC2_POSTBL_TIMING_REG_WRITE writes[] =
+writes[writeCount++] = (SEC2_POSTBL_TIMING_REG_WRITE)
 {
-    /* Existing compute/memory unlock. */
-
-    { 0x00abcdefU, 0x12345678U },
-    { 0x00fedcbaU, 0x87654321U },
-
-    /* This entry must always remain last. */
-    { SEC2_POSTBL_TIMING_MULTIWRITE_MARKER_ADDR, 0x00000000U },
+    0x00abcdefU, 0x12345678U
 };
 ```
 
-The patch derives `markerIndex` from `NV_ARRAY_ELEMENTS(writes)`, so appending
-entries no longer requires manually updating a marker index. CFG1 and LMR
-deliberately remain at the fixed positions 6 and 7.
+The padding loop keeps the nonzero marker at slot 87, so its exact value stays
+`0x53310058`. CFG1 and LMR deliberately remain at fixed positions 6 and 7.
+Every added write must fit before the loop; never change the 88-slot geometry
+without re-deriving the fixed DMEM frames.
 
 After the pivot, each entry consumes `0x30` bytes of DMEM and passes through:
 
@@ -55,31 +51,25 @@ After the pivot, each entry consumes `0x30` bytes of DMEM and passes through:
 ```
 
 The first writer bootstraps the pivot through the unaligned FUC5 gadget at
-IMEM `0x7934`; the stack lands at DMEM `0xec50`. After the final writer, the
-relocated stock cleanup frame runs so that a normal GSP Booter can execute
-immediately afterward.
+IMEM `0x7934`; the stack lands at DMEM `0xec50`. After writer slot 87, the
+same Booter repairs its descriptor, resumes signed verification, starts stock
+GSP-RM, releases its secure mutex, and rejoins stock teardown.
 
 ## Success criteria
 
-After the ROP tail, the Booter may still report `0xffff`, or mailbox value
-`0x31`. The authoritative results are:
+The authoritative results are:
 
-- the exact marker `0x53310000 | writeCount`,
+- Booter status `NV_OK`,
+- marker `0x53310058`,
 - the requested register readbacks,
-- a successful normal GSP boot immediately afterward.
+- handoff token `0x001180f8=0x11000000`,
+- the original single Booter returns into the normal Init-RPC path.
 
-For 100 writes, the marker is `0x53310064`.
+A nonzero Booter status is a failure even if the marker was reached.
 
 ## Limits
 
-In this context, “many writes” means at most 100 arbitrarily distributed
-`{address, value}` pairs in one SEC2 run. More than 100 operations require a
-small resident second-stage loader, such as the TU10x/GSP payload described in
-`CUSTOM-CODE.md`. That loader can then process data or commands through a
-host/scratch protocol.
-
-Do not retest:
-
-- Reading `0x8e090`: this access reproducibly blocked the payload.
-- Writing `0x8d214`: this remains excluded based on the tests performed so
-  far.
+In this context, “many writes” means the nine fixed protected writes plus at
+most 78 additional `{address, value}` pairs in one same-Booter run. More
+operations require a new layout or a small resident second-stage loader, such
+as the historical, separate TU10x/GSP payload described in `CUSTOM-CODE.md`.

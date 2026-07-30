@@ -3,7 +3,10 @@ set -Eeuo pipefail
 
 ARTIFACT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VERSION="$(tr -d '[:space:]' < "${ARTIFACT_DIR}/VERSION")"
-PATCH="${ARTIFACT_DIR}/patches/0001-sec2-one-run-clean.patch"
+PATCHES=(
+    "${ARTIFACT_DIR}/patches/0001-sec2-one-run-clean.patch"
+    "${ARTIFACT_DIR}/patches/0002-sec2-same-booter-handoff.patch"
+)
 KVER="${SEC2_ONE_RUN_KERNEL_VERSION:-$(uname -r)}"
 KMOD_ROOT="/lib/modules/${KVER}"
 KOUT="${SEC2_ONE_RUN_KERNEL_OUT:-${KMOD_ROOT}/build}"
@@ -34,7 +37,9 @@ ok()   { printf '[ OK ] %s\n' "$*"; }
 die()  { printf '[FAIL] %s\n' "$*" >&2; exit 1; }
 
 [[ -n "${VERSION}" ]] || die "VERSION is empty"
-[[ -f "${PATCH}" ]] || die "Missing patch: ${PATCH}"
+for patch_file in "${PATCHES[@]}"; do
+    [[ -f "${patch_file}" ]] || die "Missing patch: ${patch_file}"
+done
 [[ -d "${KSRC}" && -d "${KOUT}" ]] ||
     die "Kernel headers for ${KVER} are missing"
 
@@ -72,8 +77,11 @@ info "Extracting pristine ${SOURCE_NAME}"
 tar -xzf "${TARBALL}" -C "${BUILD_ROOT}"
 [[ -d "${SOURCE_DIR}" ]] || die "Expected source directory was not extracted"
 
-info "Applying the single clean one-run patch"
-patch --batch --forward -p1 -d "${SOURCE_DIR}" < "${PATCH}"
+info "Applying the ordered clean one-run patch series"
+for patch_file in "${PATCHES[@]}"; do
+    info "Applying $(basename "${patch_file}")"
+    patch --batch --forward -p1 -d "${SOURCE_DIR}" < "${patch_file}"
+done
 "${ARTIFACT_DIR}/verify.sh" --source "${SOURCE_DIR}"
 
 info "Building modules for ${KVER} with ${JOBS} jobs"

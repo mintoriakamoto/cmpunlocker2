@@ -1,0 +1,1024 @@
+diff --git a/src/nvidia/inc/kernel/gpu/gsp/kernel_gsp.h b/src/nvidia/inc/kernel/gpu/gsp/kernel_gsp.h
+index 0d82169..37966e8 100644
+--- a/src/nvidia/inc/kernel/gpu/gsp/kernel_gsp.h
++++ b/src/nvidia/inc/kernel/gpu/gsp/kernel_gsp.h
+@@ -1,2 +1,6 @@
+ #include "g_kernel_gsp_nvoc.h"
+ 
++NV_STATUS kgspSec2PostblTimingStageBooterLoad(
++    OBJGPU *pGpu, KernelGsp *pKernelGsp);
++NV_STATUS kgspSec2PostblTimingCompleteBooterLoad(
++    OBJGPU *pGpu, KernelGsp *pKernelGsp);
+diff --git a/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c b/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c
+index 0ee595f..a6cc522 100644
+--- a/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c
++++ b/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c
+@@ -562,6 +562,16 @@ kgspBootstrap_TU102
+         kgspProgramLibosBootArgsAddr_HAL(pGpu, pKernelGsp);
+     }
+ 
++    if (bootMode == KGSP_BOOT_MODE_NORMAL)
++    {
++        status = kgspSec2PostblTimingStageBooterLoad(pGpu, pKernelGsp);
++        if (status != NV_OK)
++        {
++            NV_PRINTF(LEVEL_ERROR, "failed to stage same-Booter payload: 0x%x\n", status);
++            return status;
++        }
++    }
++
+     // Execute Booter Load
+     status = kgspExecuteBooterLoad_HAL(pGpu, pKernelGsp,
+                                        _kgspGetBooterLoadArgs(pKernelGsp, bootMode));
+@@ -571,6 +581,16 @@ kgspBootstrap_TU102
+         return status;
+     }
+ 
++    if (bootMode == KGSP_BOOT_MODE_NORMAL)
++    {
++        status = kgspSec2PostblTimingCompleteBooterLoad(pGpu, pKernelGsp);
++        if (status != NV_OK)
++        {
++            NV_PRINTF(LEVEL_ERROR, "failed to complete same-Booter handoff: 0x%x\n", status);
++            return status;
++        }
++    }
++
+     // Send init RPCs necessary for GSP-RM booting, before creating OBJGPU.
+     // Skips for suspend/resume as GSP saves/restores context
+     if (bootMode == KGSP_BOOT_MODE_NORMAL)
+diff --git a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
+index 5f0e5f0..92d29f8 100644
+--- a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
++++ b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
+@@ -105,9 +105,17 @@
+ #define SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID   0x20C2
+ #define SEC2_POSTBL_TIMING_CMP_170HX_10GB_PCI_DEVICE_ID 0x2082
+ #define SEC2_POSTBL_TIMING_SIGNATURE_SIZE          0x0000f800ULL
++#define SEC2_POSTBL_TIMING_OVERFLOW_COPY_SIZE      0x0000f7f0ULL
+ #define SEC2_POSTBL_TIMING_FILL_DWORD              0x000004a7U
+-#define SEC2_POSTBL_TIMING_MULTIWRITE_MAX_WRITES   100U
++#define SEC2_POSTBL_TIMING_MULTIWRITE_MAX_WRITES   88U
+ #define SEC2_POSTBL_TIMING_MULTIWRITE_MARKER_ADDR  0x000014fcU
++#define SEC2_POSTBL_TIMING_MULTIWRITE_MARKER_VALUE \
++    (0x53310000U | SEC2_POSTBL_TIMING_MULTIWRITE_MAX_WRITES)
++#define SEC2_POSTBL_TIMING_CORE_WRITE_COUNT         8U
++#define SEC2_POSTBL_TIMING_STOCK_SIGNATURE_LIMIT   0x00001100ULL
++#define SEC2_POSTBL_TIMING_HANDOFF_TOKEN_ADDR       0x001180f8U
++#define SEC2_POSTBL_TIMING_HANDOFF_TOKEN_VALUE      0x11000000U
++#define SEC2_POSTBL_TIMING_HANDOFF_PREBOOT_MASK     0xfff00000U
+ 
+ typedef struct
+ {
+@@ -116,9 +124,12 @@ typedef struct
+ } SEC2_POSTBL_TIMING_REG_WRITE;
+ 
+ NV_STATUS kgspSec2PostblTimingRebuildStockSignature(OBJGPU *pGpu, KernelGsp *pKernelGsp);
++static NV_STATUS _kgspSec2PostblTimingBuildResumeMeta(
++    OBJGPU *pGpu, KernelGsp *pKernelGsp, GspFwWprMeta *pResumeMeta);
+ static NV_STATUS _kgspSec2PostblTimingRefillMultiwritePayload(
+     OBJGPU *pGpu, KernelGsp *pKernelGsp,
+-    const SEC2_POSTBL_TIMING_REG_WRITE *pWrites, NvU32 writeCount);
++    const SEC2_POSTBL_TIMING_REG_WRITE *pWrites, NvU32 writeCount,
++    NvU64 booterFbSize, const GspFwWprMeta *pResumeMeta);
+ 
+ static NvBool
+ _kgspSec2PostblTimingEnabled(OBJGPU *pGpu)
+@@ -128,6 +139,76 @@ _kgspSec2PostblTimingEnabled(OBJGPU *pGpu)
+             devId == SEC2_POSTBL_TIMING_CMP_170HX_10GB_PCI_DEVICE_ID);
+ }
+ 
++static NV_STATUS
++_kgspSec2PostblTimingGetTargetFbSize
++(
++    OBJGPU *pGpu,
++    NvU64 *pTargetFbBytes
++)
++{
++    NvU32 devId = pGpu->idInfo.PCIDeviceID >> 16;
++
++    NV_ASSERT_OR_RETURN(pTargetFbBytes != NULL, NV_ERR_INVALID_ARGUMENT);
++
++    if (devId == SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID)
++        *pTargetFbBytes = 0x0000001000000000ULL;
++    else if (devId == SEC2_POSTBL_TIMING_CMP_170HX_10GB_PCI_DEVICE_ID)
++        *pTargetFbBytes = 0x0000000a00000000ULL;
++    else
++        return NV_ERR_NOT_SUPPORTED;
++
++    return NV_OK;
++}
++
++static NV_STATUS
++_kgspSec2PostblTimingInitCoreWrites
++(
++    OBJGPU *pGpu,
++    SEC2_POSTBL_TIMING_REG_WRITE *pWrites,
++    NvU32 capacity
++)
++{
++    NvU32 devId = pGpu->idInfo.PCIDeviceID >> 16;
++
++    NV_ASSERT_OR_RETURN(pWrites != NULL, NV_ERR_INVALID_ARGUMENT);
++    NV_ASSERT_OR_RETURN(capacity >= SEC2_POSTBL_TIMING_CORE_WRITE_COUNT,
++                        NV_ERR_INSUFFICIENT_RESOURCES);
++
++    pWrites[0] = (SEC2_POSTBL_TIMING_REG_WRITE)
++        { 0x001fa7ccU, 0xfffff0ffU };
++    pWrites[1] = (SEC2_POSTBL_TIMING_REG_WRITE)
++        { 0x009a0148U, 0xffffffffU };
++    pWrites[2] = (SEC2_POSTBL_TIMING_REG_WRITE)
++        { 0x001fa7c4U, 0xffffffffU };
++    pWrites[3] = (SEC2_POSTBL_TIMING_REG_WRITE)
++        { 0x00823804U, 0xffffffffU };
++    pWrites[4] = (SEC2_POSTBL_TIMING_REG_WRITE)
++        { 0x0082381cU, 0x88888888U };
++    pWrites[5] = (SEC2_POSTBL_TIMING_REG_WRITE)
++        { 0x00823820U, 0x00000008U };
++
++    if (devId == SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID)
++    {
++        pWrites[6] = (SEC2_POSTBL_TIMING_REG_WRITE)
++            { 0x009a0204U, 0x02779000U };
++        pWrites[7] = (SEC2_POSTBL_TIMING_REG_WRITE)
++            { 0x00100ce0U, 0x0000020bU };
++    }
++    else if (devId == SEC2_POSTBL_TIMING_CMP_170HX_10GB_PCI_DEVICE_ID)
++    {
++        pWrites[6] = (SEC2_POSTBL_TIMING_REG_WRITE)
++            { 0x009a0204U, 0x02669000U };
++        pWrites[7] = (SEC2_POSTBL_TIMING_REG_WRITE)
++            { 0x00100ce0U, 0x0000028aU };
++    }
++    else
++    {
++        return NV_ERR_NOT_SUPPORTED;
++    }
++
++    return NV_OK;
++}
++
+ struct MIG_CI_UPDATE_CALLBACK_PARAMS
+ {
+     NvU32 execPartCount;
+@@ -4854,156 +4935,6 @@ _kgspBootGspRm(OBJGPU *pGpu, KernelGsp *pKernelGsp, GSP_FIRMWARE *pGspFw, GPU_MA
+     // Setup arguments for bootstrapping GSP
+     NV_CHECK_OK_OR_RETURN(LEVEL_ERROR, kgspPrepareForBootstrap_HAL(pGpu, pKernelGsp, KGSP_BOOT_MODE_NORMAL));
+ 
+-    if (_kgspSec2PostblTimingEnabled(pGpu))
+-    {
+-        NvU32 devId = pGpu->idInfo.PCIDeviceID >> 16;
+-        NvU32 cfg1Value;
+-        NvU32 lmrValue;
+-        NvU32 marker;
+-        NvU32 markerIndex;
+-        NvU32 i;
+-        NV_STATUS plmStatus;
+-        NvU32 wpr2Lo = GPU_REG_RD32(pGpu, 0x001fa824U);
+-        NvU32 wpr2Hi = GPU_REG_RD32(pGpu, 0x001fa828U);
+-        SEC2_POSTBL_TIMING_REG_WRITE writes[] =
+-        {
+-            /* Open every PLM before touching its protected target. */
+-            { 0x001fa7ccU, 0xfffff0ffU },
+-            { 0x009a0148U, 0xffffffffU },
+-            { 0x001fa7c4U, 0xffffffffU },
+-            { 0x00823804U, 0xffffffffU },
+-
+-            /* Compute and memory geometry; values [6]/[7] are device-specific. */
+-            { 0x0082381cU, 0x88888888U },
+-            { 0x00823820U, 0x00000008U },
+-            { 0x009a0204U, 0x00000000U },
+-            { 0x00100ce0U, 0x00000000U },
+-
+-            /*
+-             * Completion marker must stay last.  Additional ordered writes
+-             * may be inserted immediately before this entry.
+-             */
+-            { SEC2_POSTBL_TIMING_MULTIWRITE_MARKER_ADDR, 0x00000000U },
+-        };
+-
+-        if (devId == SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID)
+-        {
+-            cfg1Value = 0x02779000U;  // 8GB card: 64GB unlock
+-            lmrValue  = 0x0000020BU;
+-        }
+-        else
+-        {
+-            cfg1Value = 0x02669000U;  // 10GB card: 40GB unlock
+-            lmrValue  = 0x0000028AU;
+-        }
+-
+-        writes[6].value = cfg1Value;
+-        writes[7].value = lmrValue;
+-        markerIndex = NV_ARRAY_ELEMENTS(writes) - 1U;
+-        writes[markerIndex].value =
+-            0x53310000U | NV_ARRAY_ELEMENTS(writes);
+-
+-        NV_PRINTF(LEVEL_ERROR,
+-                  "SEC2_DEBUG: saved WPR2 lo=0x%08x hi=0x%08x\n",
+-                  wpr2Lo, wpr2Hi);
+-
+-        /*
+-         * WPR2 is host-side Booter setup, not part of the protected PRI table.
+-         * Restore it once before and once after the single SEC2 execution.
+-         */
+-        GPU_REG_WR32(pGpu, 0x001fa824U, wpr2Lo);
+-        GPU_REG_WR32(pGpu, 0x001fa828U, wpr2Hi);
+-
+-        plmStatus = _kgspSec2PostblTimingRefillMultiwritePayload(
+-            pGpu, pKernelGsp, writes, NV_ARRAY_ELEMENTS(writes));
+-        if (plmStatus != NV_OK)
+-            return plmStatus;
+-
+-        NV_PRINTF(LEVEL_ERROR,
+-                  "SEC2_DEBUG: one-run unlock starting (%u protected writes)\n",
+-                  (NvU32)NV_ARRAY_ELEMENTS(writes));
+-        plmStatus = kgspExecuteBooterLoad_HAL(
+-            pGpu, pKernelGsp,
+-            memdescGetPhysAddr(
+-                pKernelGsp->pWprMetaDescriptor, AT_GPU, 0));
+-
+-        GPU_REG_WR32(pGpu, 0x001fa824U, wpr2Lo);
+-        GPU_REG_WR32(pGpu, 0x001fa828U, wpr2Hi);
+-
+-        marker = GPU_REG_RD32(
+-            pGpu, SEC2_POSTBL_TIMING_MULTIWRITE_MARKER_ADDR);
+-        NV_PRINTF(LEVEL_ERROR,
+-                  "SEC2_DEBUG: one-run status=0x%x marker=0x%08x "
+-                  "expected=0x%08x\n",
+-                  plmStatus, marker, writes[markerIndex].value);
+-        if (marker != writes[markerIndex].value)
+-        {
+-            NV_PRINTF(LEVEL_ERROR,
+-                      "SEC2_DEBUG: one-run chain did not reach its marker\n");
+-            return NV_ERR_INVALID_STATE;
+-        }
+-
+-        for (i = 0; i + 1U < NV_ARRAY_ELEMENTS(writes); i++)
+-        {
+-            NvU32 readback = GPU_REG_RD32(pGpu, writes[i].addr);
+-            if (readback != writes[i].value)
+-            {
+-                NV_PRINTF(LEVEL_ERROR,
+-                          "SEC2_DEBUG: one-run verify[%u] addr=0x%08x "
+-                          "want=0x%08x got=0x%08x\n",
+-                          i, writes[i].addr, writes[i].value, readback);
+-                return NV_ERR_INVALID_STATE;
+-            }
+-        }
+-
+-        NV_PRINTF(LEVEL_ERROR,
+-                  "SEC2_DEBUG: one-run PLM/compute/memory verify "
+-                  "WPR_CFG=0x%08x FBPA=0x%08x WPR=0x%08x FEAT=0x%08x "
+-                  "SS0=0x%08x SS1=0x%08x CFG1=0x%08x LMR=0x%08x "
+-                  "(devId=0x%x)\n",
+-                  GPU_REG_RD32(pGpu, 0x001fa7ccU),
+-                  GPU_REG_RD32(pGpu, 0x009a0148U),
+-                  GPU_REG_RD32(pGpu, 0x001fa7c4U),
+-                  GPU_REG_RD32(pGpu, 0x00823804U),
+-                  GPU_REG_RD32(pGpu, 0x0082381cU),
+-                  GPU_REG_RD32(pGpu, 0x00823820U),
+-                  GPU_REG_RD32(pGpu, 0x009a0204U),
+-                  GPU_REG_RD32(pGpu, 0x00100ce0U),
+-                  devId);
+-
+-        if (plmStatus != NV_OK)
+-        {
+-            /*
+-             * The long-pivot tail exits outside the stock Booter mailbox
+-             * protocol.  Marker/readback completion is authoritative.
+-             */
+-            NV_PRINTF(LEVEL_ERROR,
+-                      "SEC2_DEBUG: ignoring expected one-run mailbox status "
+-                      "0x%x after verified completion\n",
+-                      plmStatus);
+-            plmStatus = NV_OK;
+-        }
+-
+-        plmStatus = kgspSec2PostblTimingRebuildStockSignature(pGpu, pKernelGsp);
+-        if (plmStatus != NV_OK)
+-        {
+-            NV_PRINTF(LEVEL_ERROR,
+-                      "SEC2_DEBUG: rebuild stock signature failed: 0x%x\n", plmStatus);
+-            return plmStatus;
+-        }
+-
+-        NV_CHECK_OK_OR_RETURN(LEVEL_ERROR, kgspPopulateWprMeta_HAL(pGpu, pKernelGsp, pGspFw));
+-
+-        NV_PRINTF(LEVEL_ERROR,
+-                  "SEC2_DEBUG: WPR meta updated fbSize=0x%016llx wprStart=0x%016llx "
+-                  "wprEnd=0x%016llx heapOffset=0x%016llx heapSize=0x%016llx\n",
+-                  pKernelGsp->pWprMeta->fbSize,
+-                  pKernelGsp->pWprMeta->gspFwWprStart,
+-                  pKernelGsp->pWprMeta->gspFwWprEnd,
+-                  pKernelGsp->pWprMeta->gspFwHeapOffset,
+-                  pKernelGsp->pWprMeta->gspFwHeapSize);
+-    }
+-
+     // Release the API lock if relaxed locking for parallel init is enabled
+     NvBool bRelaxedLocking = _kgspShouldRelaxGspInitLocking(pGpu);
+     if (bRelaxedLocking)
+@@ -5036,6 +4967,14 @@ _kgspBootGspRm(OBJGPU *pGpu, KernelGsp *pKernelGsp, GSP_FIRMWARE *pGspFw, GPU_MA
+         }
+     }
+ 
++    if (_kgspSec2PostblTimingEnabled(pGpu) && (status != NV_OK))
++    {
++        NV_PRINTF(LEVEL_ERROR,
++                  "SEC2_DEBUG: same-Booter path failed; suppressing unsafe "
++                  "automatic retry\n");
++        *pbRetry = NV_FALSE;
++    }
++
+     //
+     // The caller will check that both the API lock and the GPU lock will be held upon return from
+     // this function, regardless of whether GSP bootstrap succeeded.
+@@ -5541,6 +5480,10 @@ kgspDestruct_IMPL
+     kgspFreeFlcnUcode(pKernelGsp->pScrubberUcode);
+     pKernelGsp->pScrubberUcode = NULL;
+ 
++    portMemFree(pKernelGsp->pStockSignatureData);
++    pKernelGsp->pStockSignatureData = NULL;
++    pKernelGsp->stockSignatureSize = 0;
++
+     kgspFreeBootArgs_HAL(pGpu, pKernelGsp);
+ 
+     portMemFree(pKernelGsp->pSystemInfo);
+@@ -5913,6 +5856,67 @@ _kgspSec2PostblTimingPutDmemU32
+         pSignatureVa, dmemAddr - 0x00000800U, value);
+ }
+ 
++typedef struct
++{
++    NvU32 dmemAddr;
++    NvU64 value;
++} SEC2_POSTBL_TIMING_DMEM_WRITE64;
++
++static NV_STATUS
++_kgspSec2PostblTimingBuildResumeMeta
++(
++    OBJGPU *pGpu,
++    KernelGsp *pKernelGsp,
++    GspFwWprMeta *pResumeMeta
++)
++{
++    NvU64 targetFbBytes;
++    NvU64 oldFbBytes;
++    NV_STATUS status;
++
++    if ((pKernelGsp->pWprMeta == NULL) || (pResumeMeta == NULL) ||
++        (pKernelGsp->pStockSignatureData == NULL) ||
++        (pKernelGsp->stockSignatureSize == 0ULL) ||
++        (pKernelGsp->stockSignatureSize >
++         SEC2_POSTBL_TIMING_STOCK_SIGNATURE_LIMIT))
++    {
++        return NV_ERR_INVALID_STATE;
++    }
++
++    status = _kgspSec2PostblTimingGetTargetFbSize(pGpu, &targetFbBytes);
++    if (status != NV_OK)
++        return status;
++
++    *pResumeMeta = *pKernelGsp->pWprMeta;
++    oldFbBytes = pResumeMeta->fbSize;
++    if ((oldFbBytes == 0ULL) || (oldFbBytes > targetFbBytes))
++        return NV_ERR_INVALID_STATE;
++
++    /*
++     * The original Booter has already selected and populated the reachable
++     * low WPR before the overflowing signature DMA.  Preserve every WPR/image
++     * offset.  The runtime DMEM repair below also preserves oldFbBytes until
++     * the Booter's target-token handoff is complete; only the host descriptor
++     * published after success advertises the newly unlocked FB size.
++     */
++    pResumeMeta->sizeOfSignature = pKernelGsp->stockSignatureSize;
++    pResumeMeta->fbSize = targetFbBytes;
++
++    NV_PRINTF(LEVEL_ERROR,
++              "SEC2_DEBUG: same-Booter resume meta bootFb=0x%016llx "
++              "targetFb=0x%016llx preservedWprStart=0x%016llx "
++              "heap=0x%016llx boot=0x%016llx fw=0x%016llx sig=%llu\n",
++              oldFbBytes,
++              pResumeMeta->fbSize,
++              pResumeMeta->gspFwWprStart,
++              pResumeMeta->gspFwHeapSize,
++              pResumeMeta->bootBinOffset,
++              pResumeMeta->gspFwOffset,
++              pResumeMeta->sizeOfSignature);
++
++    return NV_OK;
++}
++
+ /*
+  * Build one Heavy-Secure SEC2 execution containing writeCount protected PRI
+  * writes.  The first writer returns through the valid FUC5 instruction at
+@@ -5924,6 +5928,16 @@ _kgspSec2PostblTimingPutDmemU32
+  * chain at DMEM 0xec50.  Each subsequent 0x30-byte cycle invokes:
+  *
+  *     0x0cbd -> 0x1fbd -> 0x10aa
++ *
++ * All 88 writer slots execute before signed GSP startup.  The local-DMEM
++ * store chain then restores the Booter descriptor and resumes the interrupted
++ * image verification at 0x273a.  The overflowing DMA ends at DMEM 0xfff0,
++ * preserving the runtime secure-mutex owner byte at 0xfff3.  Before the signed
++ * image starts, a one-byte stock memcpy copies that owner into the post-image
++ * release frame.  After image startup, two ready-polled 0x0b47 DIO calls release
++ * mutex ID 3 and its exact owner without entering the stock guarded handshake
++ * that is no longer safe once GSP is live.  The proven 0x1180f8 commit then
++ * returns to stock status reporting and secure teardown at 0x810d.
+  */
+ static NV_STATUS
+ _kgspSec2PostblTimingFillMultiwritePayload
+@@ -5931,23 +5945,59 @@ _kgspSec2PostblTimingFillMultiwritePayload
+     NvU8 *pSignatureVa,
+     NvU64 signatureSize,
+     const SEC2_POSTBL_TIMING_REG_WRITE *pWrites,
+-    NvU32 writeCount
++    NvU32 writeCount,
++    NvU64 booterFbSize,
++    const GspFwWprMeta *pResumeMeta
+ )
+ {
+-    const NvU32 canary = 0xc0deca7eU;
++    const NvU32 canary = 0x00000001U;
+     const NvU32 pivotRet = 0x0000ec50U;
++    SEC2_POSTBL_TIMING_DMEM_WRITE64 dmemWrites[12];
+     NvU32 stack;
+     NvU32 tail;
++    NvU32 frame;
++    NvU32 copyFrame;
++    NvU32 bootFrame;
++    NvU32 wrapperFrame;
++    NvU32 releaseFrame;
++    NvU32 tokenDest;
++    NvU32 commitFrame;
+     NvU32 i;
+ 
+     if ((signatureSize < SEC2_POSTBL_TIMING_SIGNATURE_SIZE) ||
+-        (pWrites == NULL) || (writeCount == 0U))
++        (pWrites == NULL) ||
++        (writeCount != SEC2_POSTBL_TIMING_MULTIWRITE_MAX_WRITES) ||
++        (booterFbSize == 0ULL) || (pResumeMeta == NULL) ||
++        (pWrites[writeCount - 1U].addr !=
++         SEC2_POSTBL_TIMING_MULTIWRITE_MARKER_ADDR))
+     {
+         return NV_ERR_INVALID_ARGUMENT;
+     }
+ 
+-    if (writeCount > SEC2_POSTBL_TIMING_MULTIWRITE_MAX_WRITES)
+-        return NV_ERR_INSUFFICIENT_RESOURCES;
++    dmemWrites[0].dmemAddr = 0x00000650U;
++    dmemWrites[0].value = pResumeMeta->sizeOfSignature;
++    dmemWrites[1].dmemAddr = 0x00000658U;
++    dmemWrites[1].value = pResumeMeta->gspFwRsvdStart;
++    dmemWrites[2].dmemAddr = 0x00000660U;
++    dmemWrites[2].value = pResumeMeta->nonWprHeapOffset;
++    dmemWrites[3].dmemAddr = 0x00000670U;
++    dmemWrites[3].value = pResumeMeta->gspFwWprStart;
++    dmemWrites[4].dmemAddr = 0x00000678U;
++    dmemWrites[4].value = pResumeMeta->gspFwHeapOffset;
++    dmemWrites[5].dmemAddr = 0x00000680U;
++    dmemWrites[5].value = pResumeMeta->gspFwHeapSize;
++    dmemWrites[6].dmemAddr = 0x00000688U;
++    dmemWrites[6].value = pResumeMeta->gspFwOffset;
++    dmemWrites[7].dmemAddr = 0x00000690U;
++    dmemWrites[7].value = pResumeMeta->bootBinOffset;
++    dmemWrites[8].dmemAddr = 0x00000698U;
++    dmemWrites[8].value = pResumeMeta->frtsOffset;
++    dmemWrites[9].dmemAddr = 0x000006a8U;
++    dmemWrites[9].value = pResumeMeta->gspFwWprEnd;
++    dmemWrites[10].dmemAddr = 0x000006b0U;
++    dmemWrites[10].value = booterFbSize;
++    dmemWrites[11].dmemAddr = 0x000006b8U;
++    dmemWrites[11].value = pResumeMeta->vgaWorkspaceOffset;
+ 
+     for (i = 0; i + sizeof(NvU32) <= signatureSize; i += sizeof(NvU32))
+     {
+@@ -5990,46 +6040,246 @@ _kgspSec2PostblTimingFillMultiwritePayload
+             pSignatureVa, stack + 0x28U, 0x000010aaU);
+         _kgspSec2PostblTimingPutDmemU32(
+             pSignatureVa, stack + 0x2cU,
+-            (i + 1U < writeCount) ? 0x00000cbdU : 0x0000815aU);
++            0x00000cbdU);
+         stack += 0x30U;
+     }
+ 
+     tail = stack;
+-    NV_ASSERT_OR_RETURN((tail + 0x6cU) <= 0x00010000U,
+-                        NV_ERR_INSUFFICIENT_RESOURCES);
++    NV_ASSERT_OR_RETURN(tail == 0x0000fcd4U, NV_ERR_INVALID_STATE);
++
++    /*
++     * The final writer returns to 0x0cbd.  Its pop3 frame selects the pop8
++     * gadget at 0x071a, which seeds r2/r1/r0 for the first 64-bit local store.
++    */
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, tail + 0x14U, 0x0000071aU);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, tail + 0x28U, 0x00000000U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, tail + 0x30U, dmemWrites[0].dmemAddr);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, tail + 0x34U, (NvU32)dmemWrites[0].value);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, tail + 0x38U,
++        (NvU32)(dmemWrites[0].value >> 32));
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, tail + 0x44U, 0x00000f6cU);
++
++    /*
++     * 0x0f6c stores r0:r1 to local DMEM at r2, then pops the next store:
++     *
++     *   D[r2 + 4] = r0; D[r2] = r1; pop r2..r0; return
++     */
++    frame = tail + 0x48U;
++    for (i = 0; i < NV_ARRAY_ELEMENTS(dmemWrites); i++)
++    {
++        if (i + 1U < NV_ARRAY_ELEMENTS(dmemWrites))
++        {
++            _kgspSec2PostblTimingPutDmemU32(
++                pSignatureVa, frame + 0x00U,
++                dmemWrites[i + 1U].dmemAddr);
++            _kgspSec2PostblTimingPutDmemU32(
++                pSignatureVa, frame + 0x04U,
++                (NvU32)dmemWrites[i + 1U].value);
++            _kgspSec2PostblTimingPutDmemU32(
++                pSignatureVa, frame + 0x08U,
++                (NvU32)(dmemWrites[i + 1U].value >> 32));
++            _kgspSec2PostblTimingPutDmemU32(
++                pSignatureVa, frame + 0x10U, 0x00000f6cU);
++        }
++        else
++        {
++            /*
++             * Preserve the live owner at D[0xfff3] in r0 and enter the
++             * one-byte token-copy bridge below.
++             */
++            _kgspSec2PostblTimingPutDmemU32(
++                pSignatureVa, frame + 0x00U, 0x00000000U);
++            _kgspSec2PostblTimingPutDmemU32(
++                pSignatureVa, frame + 0x04U, 0x00000000U);
++            _kgspSec2PostblTimingPutDmemU32(
++                pSignatureVa, frame + 0x08U, 0x0000fff3U);
++            _kgspSec2PostblTimingPutDmemU32(
++                pSignatureVa, frame + 0x10U, 0x00000cbdU);
++        }
++        _kgspSec2PostblTimingPutDmemU32(
++            pSignatureVa, frame + 0x0cU, canary);
++        frame += 0x14U;
++    }
++
++    /*
++     * G_CBD and the 0x1fbd epilogue turn r0=0xfff3 into memcpy source r11
++     * and tokenDest into destination r10.  The harmless 0x0f6c side effect
++     * re-stores sizeOfSignature at D[0x650], leaves r1=0x600/r0=0 for image
++     * verification, and supplies memcpy length 1 through the global canary.
++     * The memcpy epilogue then returns directly to 0x273a.
++     */
++    copyFrame = frame;
++    bootFrame = copyFrame + 0x48U;
++    wrapperFrame = bootFrame + 0x3cU;
++    releaseFrame = wrapperFrame + 0x0cU;
++    tokenDest = releaseFrame + 0x30U;
++    commitFrame = releaseFrame + 0x60U;
++    NV_ASSERT_OR_RETURN(
++        (copyFrame == 0x0000fe0cU) &&
++        (bootFrame == 0x0000fe54U) &&
++        (wrapperFrame == 0x0000fe90U) &&
++        (releaseFrame == 0x0000fe9cU) &&
++        (tokenDest == 0x0000feccU) &&
++        (commitFrame == 0x0000fefcU) &&
++        ((releaseFrame + 0x90U) == 0x0000ff2cU),
++        NV_ERR_INVALID_STATE);
++
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, copyFrame + 0x00U, 0x00000000U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, copyFrame + 0x04U, 0x00000000U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, copyFrame + 0x08U, 0x00000000U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, copyFrame + 0x0cU, tokenDest);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, copyFrame + 0x10U, canary);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, copyFrame + 0x14U, 0x00001fbdU);
++
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, copyFrame + 0x18U, 0x00000650U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, copyFrame + 0x1cU,
++        (NvU32)pResumeMeta->sizeOfSignature);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, copyFrame + 0x20U,
++        (NvU32)(pResumeMeta->sizeOfSignature >> 32));
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, copyFrame + 0x24U, canary);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, copyFrame + 0x28U, 0x00000f6cU);
++
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, copyFrame + 0x2cU, 0x00000000U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, copyFrame + 0x30U, 0x00000600U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, copyFrame + 0x34U, 0x00000000U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, copyFrame + 0x38U, canary);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, copyFrame + 0x3cU, 0x00002c99U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, copyFrame + 0x40U, canary);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, copyFrame + 0x44U, 0x0000273aU);
++
++    for (i = 0x10U; i <= 0x30U; i += sizeof(NvU32))
++    {
++        _kgspSec2PostblTimingPutDmemU32(
++            pSignatureVa, bootFrame + i, 0x00000000U);
++    }
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, bootFrame + 0x34U, canary);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, bootFrame + 0x38U, 0x0000814eU);
++
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, wrapperFrame + 0x00U, 0x00000000U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, wrapperFrame + 0x04U, canary);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, wrapperFrame + 0x08U, 0x00000cbdU);
++
++    /*
++     * mailbox_write_d000 entry 0x0b47 polls D000, then its 0x0b6a tail:
++     *
++     *   I[0xd200] = r3; I[0xd100] = r0
++     *
++     * It keeps the ready poll and guarded CSB errors but skips the stock target
++     * handshake that hangs after signed GSP startup.
++     * First clear mutex 3, then return the exact runtime owner copied above.
++     */
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, releaseFrame + 0x00U, 0x00000000U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, releaseFrame + 0x04U, 0x00000000U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, releaseFrame + 0x08U, 0x00000000U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, releaseFrame + 0x0cU, 0x00008e18U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, releaseFrame + 0x10U, canary);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, releaseFrame + 0x14U, 0x00000b47U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, releaseFrame + 0x18U, 0x00000000U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, releaseFrame + 0x1cU, 0x00000000U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, releaseFrame + 0x20U, 0x00000000U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, releaseFrame + 0x24U, 0x00000000U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, releaseFrame + 0x28U, canary);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, releaseFrame + 0x2cU, 0x00000cbdU);
+ 
+     /*
+-     * Relocated copy of the proven one-write cleanup frame.  Returning here
+-     * leaves SEC2 resettable for the following stock Booter invocation.
++     * tokenDest is releaseFrame+0x30, the r3 slot of this second DIO pair.
++     * It is initially zero and receives the one-byte owner before image start.
+      */
+     _kgspSec2PostblTimingPutDmemU32(
+-        pSignatureVa, tail + 0x00U, 0x00008e18U);
++        pSignatureVa, releaseFrame + 0x30U, 0x00000000U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, releaseFrame + 0x34U, 0x00000000U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, releaseFrame + 0x38U, 0x00000000U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, releaseFrame + 0x3cU, 0x00008e08U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, releaseFrame + 0x40U, canary);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, releaseFrame + 0x44U, 0x00000b47U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, releaseFrame + 0x48U, 0x00000000U);
+     _kgspSec2PostblTimingPutDmemU32(
+-        pSignatureVa, tail + 0x04U, canary);
++        pSignatureVa, releaseFrame + 0x4cU, 0x00000000U);
+     _kgspSec2PostblTimingPutDmemU32(
+-        pSignatureVa, tail + 0x08U, 0x0000815aU);
++        pSignatureVa, releaseFrame + 0x50U, 0x00000000U);
+     _kgspSec2PostblTimingPutDmemU32(
+-        pSignatureVa, tail + 0x0cU, 0x00000000U);
++        pSignatureVa, releaseFrame + 0x54U, 0x11000000U);
+     _kgspSec2PostblTimingPutDmemU32(
+-        pSignatureVa, tail + 0x10U, canary);
++        pSignatureVa, releaseFrame + 0x58U, canary);
+     _kgspSec2PostblTimingPutDmemU32(
+-        pSignatureVa, tail + 0x14U, 0x00001fbdU);
++        pSignatureVa, releaseFrame + 0x5cU, 0x00000cbdU);
++
++    /*
++     * Commit the target token through the already proven privileged PRI
++     * writer, restore r0=0, then rejoin stock report_status/secure_teardown.
++     */
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, commitFrame + 0x00U, 0x00000000U);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, commitFrame + 0x04U, 0x00000000U);
+     _kgspSec2PostblTimingPutDmemU32(
+-        pSignatureVa, tail + 0x20U, tail + 0x2cU);
++        pSignatureVa, commitFrame + 0x08U, 0x00000000U);
+     _kgspSec2PostblTimingPutDmemU32(
+-        pSignatureVa, tail + 0x28U, 0x0000582dU);
++        pSignatureVa, commitFrame + 0x0cU,
++        SEC2_POSTBL_TIMING_HANDOFF_TOKEN_ADDR);
+     _kgspSec2PostblTimingPutDmemU32(
+-        pSignatureVa, tail + 0x34U, canary);
++        pSignatureVa, commitFrame + 0x10U, canary);
+     _kgspSec2PostblTimingPutDmemU32(
+-        pSignatureVa, tail + 0x38U, 0x00000cbdU);
++        pSignatureVa, commitFrame + 0x14U, 0x00001fbdU);
+     _kgspSec2PostblTimingPutDmemU32(
+-        pSignatureVa, tail + 0x48U, 0x00000003U);
++        pSignatureVa, commitFrame + 0x18U, 0x00000000U);
+     _kgspSec2PostblTimingPutDmemU32(
+-        pSignatureVa, tail + 0x50U, 0x00001fbdU);
++        pSignatureVa, commitFrame + 0x1cU, 0x00000000U);
+     _kgspSec2PostblTimingPutDmemU32(
+-        pSignatureVa, tail + 0x64U, 0x00000ccbU);
++        pSignatureVa, commitFrame + 0x20U, 0x00000000U);
+     _kgspSec2PostblTimingPutDmemU32(
+-        pSignatureVa, tail + 0x68U, 0x00007f2fU);
++        pSignatureVa, commitFrame + 0x24U, canary);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, commitFrame + 0x28U, 0x000010aaU);
++    _kgspSec2PostblTimingPutDmemU32(
++        pSignatureVa, commitFrame + 0x2cU, 0x0000810dU);
+ 
+     return NV_OK;
+ }
+@@ -6040,7 +6290,9 @@ _kgspSec2PostblTimingRefillMultiwritePayload
+     OBJGPU *pGpu,
+     KernelGsp *pKernelGsp,
+     const SEC2_POSTBL_TIMING_REG_WRITE *pWrites,
+-    NvU32 writeCount
++    NvU32 writeCount,
++    NvU64 booterFbSize,
++    const GspFwWprMeta *pResumeMeta
+ )
+ {
+     NvU8 *pSignatureVa;
+@@ -6058,7 +6310,33 @@ _kgspSec2PostblTimingRefillMultiwritePayload
+         pSignatureVa,
+         memdescGetSize(pKernelGsp->pSignatureMemdesc),
+         pWrites,
+-        writeCount);
++        writeCount,
++        booterFbSize,
++        pResumeMeta);
++
++    if (status == NV_OK)
++    {
++        if ((pKernelGsp->pStockSignatureData == NULL) ||
++            (pKernelGsp->stockSignatureSize == 0ULL) ||
++            (pKernelGsp->stockSignatureSize >
++             SEC2_POSTBL_TIMING_STOCK_SIGNATURE_LIMIT))
++        {
++            status = NV_ERR_INVALID_STATE;
++        }
++        else
++        {
++            /*
++             * The first stock-signature bytes do not overlap the chain.  The
++             * runtime descriptor repair changes 0xf7f0 back to this authentic
++             * length before the resumed image verification consumes them.
++             */
++            portMemCopy(
++                pSignatureVa,
++                memdescGetSize(pKernelGsp->pSignatureMemdesc),
++                pKernelGsp->pStockSignatureData,
++                pKernelGsp->stockSignatureSize);
++        }
++    }
+ 
+     memdescUnmapInternal(pGpu, pKernelGsp->pSignatureMemdesc, 0);
+     if (status != NV_OK)
+@@ -6071,7 +6349,7 @@ _kgspSec2PostblTimingRefillMultiwritePayload
+             memdescGetPhysAddr(
+                 pKernelGsp->pSignatureMemdesc, AT_GPU, 0);
+         pKernelGsp->pWprMeta->sizeOfSignature =
+-            memdescGetSize(pKernelGsp->pSignatureMemdesc);
++            SEC2_POSTBL_TIMING_OVERFLOW_COPY_SIZE;
+     }
+     if (pKernelGsp->pWprMetaDescriptor != NULL)
+         memdescFlushCpuCaches(pGpu, pKernelGsp->pWprMetaDescriptor);
+@@ -6079,6 +6357,206 @@ _kgspSec2PostblTimingRefillMultiwritePayload
+     return NV_OK;
+ }
+ 
++NV_STATUS
++kgspSec2PostblTimingStageBooterLoad
++(
++    OBJGPU *pGpu,
++    KernelGsp *pKernelGsp
++)
++{
++    SEC2_POSTBL_TIMING_REG_WRITE
++        writes[SEC2_POSTBL_TIMING_MULTIWRITE_MAX_WRITES];
++    GspFwWprMeta resumeMeta;
++    NvU32 handoffTokenBefore;
++    NvU32 writeCount = SEC2_POSTBL_TIMING_CORE_WRITE_COUNT;
++    NvU32 protectedWriteCount;
++    NvU64 booterFbSize;
++    NV_STATUS status;
++
++    if (!_kgspSec2PostblTimingEnabled(pGpu))
++        return NV_OK;
++
++    if ((pKernelGsp->pWprMeta == NULL) ||
++        (pKernelGsp->pWprMetaDescriptor == NULL) ||
++        (pKernelGsp->pWprMeta->sizeOfSignature ==
++         SEC2_POSTBL_TIMING_OVERFLOW_COPY_SIZE))
++    {
++        return NV_ERR_INVALID_STATE;
++    }
++
++    status = _kgspSec2PostblTimingInitCoreWrites(
++        pGpu, writes, NV_ARRAY_ELEMENTS(writes));
++    if (status != NV_OK)
++        return status;
++
++    handoffTokenBefore =
++        GPU_REG_RD32(pGpu, SEC2_POSTBL_TIMING_HANDOFF_TOKEN_ADDR);
++    if ((handoffTokenBefore == 0xffffffffU) ||
++        ((handoffTokenBefore & 0xffff0000U) == 0xbadf0000U))
++    {
++        return NV_ERR_INVALID_STATE;
++    }
++
++    /*
++     * Clear the Booter's pre-image-start gate in the same Heavy-Secure writer
++     * chain.  The signed continuation commits 0x11000000 only after GSP-RM
++     * has started.
++     */
++    writes[writeCount].addr = SEC2_POSTBL_TIMING_HANDOFF_TOKEN_ADDR;
++    writes[writeCount++].value =
++        handoffTokenBefore &
++        ~SEC2_POSTBL_TIMING_HANDOFF_PREBOOT_MASK;
++    protectedWriteCount = writeCount;
++
++    /*
++     * All variable-length writer frames must finish before signed GSP startup.
++     * Pad the nine real writes with harmless marker clears; slot 88 is the one
++     * non-zero completion marker.
++     */
++    while ((writeCount + 1U) <
++           SEC2_POSTBL_TIMING_MULTIWRITE_MAX_WRITES)
++    {
++        writes[writeCount].addr =
++            SEC2_POSTBL_TIMING_MULTIWRITE_MARKER_ADDR;
++        writes[writeCount++].value = 0U;
++    }
++
++    writes[writeCount].addr =
++        SEC2_POSTBL_TIMING_MULTIWRITE_MARKER_ADDR;
++    writes[writeCount++].value =
++        SEC2_POSTBL_TIMING_MULTIWRITE_MARKER_VALUE;
++    NV_ASSERT_OR_RETURN(
++        writeCount == SEC2_POSTBL_TIMING_MULTIWRITE_MAX_WRITES,
++        NV_ERR_INVALID_STATE);
++
++    status = _kgspSec2PostblTimingBuildResumeMeta(
++        pGpu, pKernelGsp, &resumeMeta);
++    if (status != NV_OK)
++        return status;
++
++    booterFbSize = pKernelGsp->pWprMeta->fbSize;
++    status = _kgspSec2PostblTimingRefillMultiwritePayload(
++        pGpu, pKernelGsp, writes, writeCount,
++        booterFbSize, &resumeMeta);
++    if (status != NV_OK)
++        return status;
++
++    NV_PRINTF(LEVEL_ERROR,
++              "SEC2_DEBUG: same-Booter payload staged for the original "
++              "stock Booter (%u protected writes, %u fixed pre-handoff "
++              "slots)\n",
++              protectedWriteCount,
++              SEC2_POSTBL_TIMING_MULTIWRITE_MAX_WRITES);
++
++    return NV_OK;
++}
++
++NV_STATUS
++kgspSec2PostblTimingCompleteBooterLoad
++(
++    OBJGPU *pGpu,
++    KernelGsp *pKernelGsp
++)
++{
++    SEC2_POSTBL_TIMING_REG_WRITE writes[
++        SEC2_POSTBL_TIMING_CORE_WRITE_COUNT];
++    NvU64 bootFbSize;
++    NvU64 targetFbSize;
++    NvU32 handoffToken;
++    NvU32 marker;
++    NvU32 i;
++    NV_STATUS status;
++
++    if (!_kgspSec2PostblTimingEnabled(pGpu))
++        return NV_OK;
++
++    if ((pKernelGsp->pWprMeta == NULL) ||
++        (pKernelGsp->pWprMetaDescriptor == NULL) ||
++        (pKernelGsp->pWprMeta->sizeOfSignature !=
++         SEC2_POSTBL_TIMING_OVERFLOW_COPY_SIZE) ||
++        (pKernelGsp->pStockSignatureData == NULL) ||
++        (pKernelGsp->stockSignatureSize == 0ULL) ||
++        (pKernelGsp->stockSignatureSize >
++         SEC2_POSTBL_TIMING_STOCK_SIGNATURE_LIMIT))
++    {
++        return NV_ERR_INVALID_STATE;
++    }
++
++    marker = GPU_REG_RD32(
++        pGpu, SEC2_POSTBL_TIMING_MULTIWRITE_MARKER_ADDR);
++    NV_PRINTF(LEVEL_ERROR,
++              "SEC2_DEBUG: original stock Booter returned; marker=0x%08x "
++              "expected=0x%08x\n",
++              marker, SEC2_POSTBL_TIMING_MULTIWRITE_MARKER_VALUE);
++    if (marker != SEC2_POSTBL_TIMING_MULTIWRITE_MARKER_VALUE)
++    {
++        NV_PRINTF(LEVEL_ERROR,
++                  "SEC2_DEBUG: same-Booter chain did not reach its marker\n");
++        return NV_ERR_INVALID_STATE;
++    }
++
++    status = _kgspSec2PostblTimingInitCoreWrites(
++        pGpu, writes, NV_ARRAY_ELEMENTS(writes));
++    if (status != NV_OK)
++        return status;
++
++    for (i = 0; i < NV_ARRAY_ELEMENTS(writes); i++)
++    {
++        NvU32 readback = GPU_REG_RD32(pGpu, writes[i].addr);
++        if (readback != writes[i].value)
++        {
++            NV_PRINTF(LEVEL_ERROR,
++                      "SEC2_DEBUG: same-Booter verify[%u] addr=0x%08x "
++                      "want=0x%08x got=0x%08x\n",
++                      i, writes[i].addr, writes[i].value, readback);
++            return NV_ERR_INVALID_STATE;
++        }
++    }
++
++    handoffToken =
++        GPU_REG_RD32(pGpu, SEC2_POSTBL_TIMING_HANDOFF_TOKEN_ADDR);
++    if (handoffToken != SEC2_POSTBL_TIMING_HANDOFF_TOKEN_VALUE)
++    {
++        NV_PRINTF(LEVEL_ERROR,
++                  "SEC2_DEBUG: same-Booter handoff token mismatch: "
++                  "got=0x%08x expected=0x%08x\n",
++                  handoffToken,
++                  SEC2_POSTBL_TIMING_HANDOFF_TOKEN_VALUE);
++        return NV_ERR_INVALID_STATE;
++    }
++
++    status = _kgspSec2PostblTimingGetTargetFbSize(pGpu, &targetFbSize);
++    if (status != NV_OK)
++        return status;
++
++    bootFbSize = pKernelGsp->pWprMeta->fbSize;
++    pKernelGsp->pWprMeta->sizeOfSignature =
++        pKernelGsp->stockSignatureSize;
++    pKernelGsp->pWprMeta->fbSize = targetFbSize;
++    memdescFlushCpuCaches(pGpu, pKernelGsp->pWprMetaDescriptor);
++
++    NV_PRINTF(LEVEL_ERROR,
++              "SEC2_DEBUG: same original stock Booter completed the signed "
++              "GSP handoff; bootFb=0x%016llx targetFb=0x%016llx\n",
++              bootFbSize, targetFbSize);
++    NV_PRINTF(LEVEL_ERROR,
++              "SEC2_DEBUG: one-run PLM/compute/memory verify "
++              "WPR_CFG=0x%08x FBPA=0x%08x WPR=0x%08x FEAT=0x%08x "
++              "SS0=0x%08x SS1=0x%08x CFG1=0x%08x LMR=0x%08x "
++              "(devId=0x%x)\n",
++              GPU_REG_RD32(pGpu, 0x001fa7ccU),
++              GPU_REG_RD32(pGpu, 0x009a0148U),
++              GPU_REG_RD32(pGpu, 0x001fa7c4U),
++              GPU_REG_RD32(pGpu, 0x00823804U),
++              GPU_REG_RD32(pGpu, 0x0082381cU),
++              GPU_REG_RD32(pGpu, 0x00823820U),
++              GPU_REG_RD32(pGpu, 0x009a0204U),
++              GPU_REG_RD32(pGpu, 0x00100ce0U),
++              pGpu->idInfo.PCIDeviceID >> 16);
++
++    return NV_OK;
++}
++
+ static NV_STATUS
+ _kgspCreateSignatureMemdesc
+ (

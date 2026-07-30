@@ -1,17 +1,21 @@
-# Clean SEC2 one-run package
+# Clean SEC2 same-Booter one-run package
 
 This directory is the isolated, installable checkpoint for the CMP 170HX
 compute/memory unlock. It starts from pristine NVIDIA open kernel modules
-`610.43.03` and applies exactly one squashed patch.
+`610.43.03` and applies exactly two ordered patches:
+
+1. the published clean SEC2 one-run compute/memory unlock;
+2. the minimal same-Booter handoff that starts the signed stock GSP-RM
+   directly from the original stock Booter.
 
 Additional documentation:
 
-- `MANY-WRITES.md`: append up to 91 additional arbitrary writes while
-  preserving the eight compute/memory writes and final marker.
-- `CUSTOM-CODE.md`: reproduce the live-proven non-atomic TU10x/GSP IMEM plus
-  private-sequencer path for a small privileged RV64 payload.
+- `MANY-WRITES.md`: append up to 78 additional arbitrary writes while
+  preserving the nine protected handoff writes and final marker.
+- `CUSTOM-CODE.md`: historical notes for the separate non-atomic TU10x/GSP
+  IMEM plus private-sequencer payload; it is not part of this clean path.
 
-The protected SEC2 table contains nine entries in one execution:
+The protected SEC2 path performs nine real writes before the signed handoff:
 
 | # | Register | Value |
 |---:|---:|---:|
@@ -23,21 +27,32 @@ The protected SEC2 table contains nine entries in one execution:
 | 5 | `0x00823820` | `0x00000008` |
 | 6 | `0x009a0204` | device-specific CFG1 |
 | 7 | `0x00100ce0` | device-specific LMR |
-| 8 | `0x000014fc` | completion marker |
+| 8 | `0x001180f8` | clear the Booter pre-image-start gate |
 
 Runtime geometry:
 
 - `0x20c2`: `CFG1=0x02779000`, `LMR=0x0000020b`
 - `0x2082`: `CFG1=0x02669000`, `LMR=0x0000028a`
 
-The final writer enters a relocated copy of the proven stock one-write cleanup
-frame. This is required so the normal GSP Booter can run immediately after the
-exploit.
+The writer table is padded to exactly 88 slots. Slot 87 writes the completion
+marker `0x53310058`. The tail then repairs the Booter DMEM descriptor, resumes
+the interrupted signed-image verification, starts the authentic stock GSP-RM,
+releases the secure mutex with the preserved runtime owner, commits
+`0x001180f8=0x11000000`, and rejoins stock status reporting and secure
+teardown.
+
+The normal TU102 bootstrap order remains intact: stock Scrubber, optional
+FWSEC, RISC-V reset and boot arguments run first. A narrow staging hook then
+prepares the overflow immediately before the existing Booter call. That one
+original Booter performs the protected writes and signed GSP handoff; a narrow
+completion hook verifies it before the unchanged Init RPCs and GSP-ready wait.
+There is no early Booter, duplicate Booter, or skip branch.
 
 Deliberately absent:
 
-- repository patches `0002` through `0007`
+- repository patches `0003` and later
 - PCIe, UPHY, target-speed, link-rate, LTSSM, or retrain writes
+- SYS decode traps, fuse overrides, XVE/XP experiments, and FLR logic
 - the obsolete atomic Gen3 experiment
 - automatic reboot or power-cycle
 
@@ -49,14 +64,15 @@ the package an honest isolation test of the one-run primitive.
 ## Build
 
 ```bash
-cd /root/cmpunlocker/artifacts/sec2-one-run-clean
+cd cmpunlocker
 ./verify.sh
 ./build.sh
 ```
 
 The build downloads the pinned NVIDIA source tarball if needed, verifies its
-SHA-256, applies the single patch, verifies the one-run invariants, builds all
-five modules, and stages them under `out/$(uname -r)/`.
+SHA-256, applies only `0001` followed by `0002`, verifies the clean same-Booter
+invariants, builds all five modules, and stages them under
+`out/$(uname -r)/`.
 
 An existing tarball can be supplied without downloading:
 
@@ -121,22 +137,22 @@ components used by other installed kernels.
 The decisive log sequence is:
 
 ```text
-SEC2_DEBUG: one-run unlock starting (9 protected writes)
-SEC2_DEBUG: one-run status=0xffff marker=0x53310009 expected=0x53310009
+SEC2_DEBUG: same-Booter payload staged for the original stock Booter (9 protected writes, 88 fixed pre-handoff slots)
+SEC2_DEBUG: original stock Booter returned; marker=0x53310058 expected=0x53310058
+SEC2_DEBUG: same original stock Booter completed the signed GSP handoff; ...
 SEC2_DEBUG: one-run PLM/compute/memory verify ...
 ```
 
-`0xffff` is the stale Booter mailbox value, not failure. Exact marker and
-target-register readback are authoritative. A later normal GSP Booter must
-return status `0x0`.
+Unlike the older writer-only run, this path requires Booter status `0x0`, the
+exact marker, all eight compute/memory readbacks, and the exact handoff token.
+A nonzero Booter status is fatal because it means the signed continuation did
+not finish its release/report tail.
 
-The one-run `kernel_gsp.c` and SEC2 cleanup were live-validated on device
-`10de:2082` on 2026-07-28. The generic `markerIndex` change only removes the
-fixed nine-entry marker index so additional writes can be inserted before the
-last entry; it does not change the proven nine-write byte layout. This exact
-package was rebuilt from the pinned pristine tarball against kernel
-`6.12.85+deb13-amd64`; all five modules linked successfully. The rebuilt
-generic-index variant has not been live-loaded.
+This exact stock-near one-Booter sequence was live-validated on device
+`10de:2082` on 2026-07-30 after an explicit FLR. The original Booter returned
+status `0`, produced marker `0x53310058`, completed the signed handoff, and
+continued through the stock Init RPCs. Repeated `nvidia-smi` checks reported
+the unlocked `40960 MiB`. Every PCIe experiment remains excluded.
 
 Build-validation hashes:
 
@@ -144,5 +160,7 @@ Build-validation hashes:
   `9df87d753cd9c05aa0eedc462af9b35debb549a657136e863282f94c96ee2640`
 - clean patch:
   `132b74e77a0a3311c82b272b690e78d1fb4bf3a2cfd46b2159feab5d90bf577a`
-- clean `nvidia.ko`:
-  `df94a1e351f5b7fd56bb621b108fbc6f07bcac4a6191802930f1013f9a4d63db`
+- same-Booter patch:
+  `1b0b151ce4ada96f67d8f117e066310be85daa6da2180ee29a38d12f9a9f7709`
+- live-tested clean `nvidia.ko`:
+  `3eebde60dd5586e15ccdc87327d7756ea6f98126d0fdf45c60ca093cdacc3678`
