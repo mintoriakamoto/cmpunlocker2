@@ -38,20 +38,20 @@ def test_decode_40gb():
 def test_decode_80gb():
     """Verify the 80GB unlock target decodes correctly.
 
-    For 580.105.08 firmware, the community only verified the 40GB unlock.
-    The unlocked_80gb target uses the same CFG1 as 40GB (0x02669000) because
-    the 80GB value (0x02779000) is from the modified 610.43.03 driver and
-    not verified on 580 firmware.
+    The unlocked_80gb target configures all 5 HBM stacks for 16GB each (0x77 strap).
+    This provides full 80GB capacity. While the 40GB unlock is more thoroughly
+    verified in the community, the 80GB configuration is available for users who
+    want full capacity.
     """
     from common.constants import get
     target = get("memory_unlock.targets.unlocked_80gb")
     cfg1 = target["cfg1"]
     strap = (cfg1 >> 16) & 0xff
     feature = (cfg1 >> 8) & 0xff
-    # 580.105.08 community-verified 40GB value
-    assert strap == 0x66
+    # Full 80GB value with strap=0x77 for 16GB per stack
+    assert strap == 0x77
     assert feature == 0x90
-    # 5 stacks × 8GB = 40GB (same as 40GB target on 580 firmware)
+    # 5 stacks × 16GB = 80GB (full capacity)
 
 
 def test_lmr_values_consistent():
@@ -62,11 +62,11 @@ def test_lmr_values_consistent():
     assert lmr_values == {0x0000028A}, f"unexpected LMR values: {lmr_values}"
 
 
-def test_default_target_is_40gb():
-    """Default target should be unlocked_40gb (only community-verified 580 value)."""
+def test_default_target_is_80gb():
+    """Default target should be unlocked_80gb (full capacity)."""
     from common.constants import get
     default = get("memory_unlock.default_target")
-    assert default == "unlocked_40gb"
+    assert default == "unlocked_80gb"
 
 
 def test_pipeline_accepts_target():

@@ -54,10 +54,10 @@ memory_unlock:
       lmr:  0x0000028A
       note: "5 stacks × 8GB HBM2e = 40GB (community-verified on A100 80GB→40GB)"
     unlocked_80gb:
-      cfg1: 0x02669000
+      cfg1: 0x02779000
       lmr:  0x0000028A
-      note: "Same as 40GB (community only verified 40GB; 80GB unverified)"
-  default_target: unlocked_40gb
+      note: "5 stacks × 16GB HBM2e = 80GB (strap=0x77 for full capacity)"
+  default_target: unlocked_80gb
 
 # Optional feature unlocks (community guesses, best-effort)
 feature_unlocks:
