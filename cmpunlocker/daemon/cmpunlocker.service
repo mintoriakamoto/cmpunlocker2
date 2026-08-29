@@ -1,0 +1,17 @@
+[Unit]
+Description=NVIDIA CMP 170HX Unlock Daemon
+After=network.target
+ConditionPathExists=/dev/mem
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/cmpunlocker/cmpunlocker/daemon/watchdog.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cmpunlocker
+User=root
+
+[Install]
+WantedBy=multi-user.target
