@@ -63,20 +63,6 @@ def is_ecc_enabled(pci_full: str) -> bool:
         return bar0.rd32(ecc['addr']) == ecc['value']
 
 
-def is_pll_unlocked(pci_full: str) -> bool:
-    """Check if PLL frequency is unlocked."""
-    pll = get('feature_unlocks.pll_unlock')
-    with Bar0(pci_full) as bar0:
-        return bar0.rd32(pll['addr']) == pll['value']
-
-
-def is_power_limit_set(pci_full: str) -> bool:
-    """Check if power limit has been raised."""
-    pwr = get('feature_unlocks.power_limit')
-    with Bar0(pci_full) as bar0:
-        return bar0.rd32(pwr['addr']) == pwr['value']
-
-
 def apply_feature_unlocks(pci_full: str) -> dict:
     """Apply all optional feature unlocks in the correct order.
 
