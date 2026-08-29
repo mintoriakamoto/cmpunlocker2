@@ -29,9 +29,9 @@ fi
 ok "Environment OK"
 
 info "Step 2/6: Detecting GPU"
-PCI=$(lspci -nn 2>/dev/null | grep -iE "10de:20(b0|b2|b4|c2|82)" | head -1 | awk '{print $1}')
+PCI=$(lspci -nn 2>/dev/null | grep -iE "10de:(20b0|20c2|2082)" | head -1 | awk '{print $1}')
 if [ -z "$PCI" ]; then
-    err "No CMP 170HX or A100 found (10de:20b0/b2/b4/c2/82)"
+    err "No CMP 170HX found (10de:20b0/20c2/2082)"
     exit 1
 fi
 PCI_FULL="0000:${PCI}"

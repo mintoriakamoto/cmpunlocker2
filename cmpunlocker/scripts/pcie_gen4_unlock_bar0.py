@@ -58,8 +58,8 @@ PCIE_REGISTERS = {
 
 
 def find_gpu():
-    """Auto-detect CMP 170HX or A100 PCIe device."""
-    for dev_id in ["20c2", "20b0", "20b2", "20b4", "2082"]:
+    """Auto-detect CMP 170HX PCIe device."""
+    for dev_id in ["20b0", "20c2", "2082"]:
         result = subprocess.run(
             ["lspci", "-nn", "-D"],
             capture_output=True, text=True, check=False
