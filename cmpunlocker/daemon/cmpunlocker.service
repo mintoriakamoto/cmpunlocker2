@@ -1,17 +1,24 @@
 [Unit]
 Description=NVIDIA CMP 170HX Unlock Daemon
-After=network.target
+Documentation=man:cmpunlocker(1)
+After=network.target nvidia-driver.service
 ConditionPathExists=/dev/mem
+ConditionPathExists=/sys/bus/pci/
 
 [Service]
 Type=simple
 ExecStart=/usr/bin/python3 /opt/cmpunlocker/cmpunlocker/daemon/watchdog.py
-Restart=always
-RestartSec=5
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=120
+StartLimitBurst=5
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=cmpunlocker
 User=root
+# Prevent daemon from blocking shutdown
+KillMode=process
+TimeoutStopSec=5
 
 [Install]
 WantedBy=multi-user.target
