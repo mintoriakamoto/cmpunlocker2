@@ -1,5 +1,5 @@
 #!/bin/bash
-# pcie_gen4_unlock.sh — Enable PCIe Gen 4 via NV_XVE_PASSTHROUGH_EMULATED_CONFIG
+# pcie_gen4_unlock.sh — Enable PCIe Gen 4-5 via NV_XVE_PASSTHROUGH_EMULATED_CONFIG
 #
 # THIS IS THE REAL APPROACH based on reverse-engineering of the
 # open-gpu-kernel-modules-610.43.03 source code.
@@ -7,7 +7,8 @@
 # Key finding: GA100 has a special emulated config space at
 # NV_XVE_PASSTHROUGH_EMULATED_CONFIG = 0xE8 (in XVE register space).
 # This register has a ROOT_PORT_SPEED field (bits 3:0) that can
-# be set to 0x4 to enable Gen 4.
+# be set to enable Gen 2-5 (encoded as: 2=Gen2, 3=Gen3, 4=Gen4, 5=Gen5).
+# Script auto-detects root complex speed and targets the highest available.
 #
 # The XVE register space is accessed via:
 #   - PCI Config Space: standard PCI access
@@ -115,8 +116,9 @@ RC_MAX=$(lspci -nns 00:00.0 2>/dev/null | head -1)
 info "Root complex: $RC_MAX"
 RC_SPEED=$(lspci -s 00:00.0 -vv 2>/dev/null | grep "Speed" | head -1 | awk '{print $2}')
 
-# Determine target speed
+# Determine target speed (supports Gen 1-5 via XVE register)
 case "$RC_SPEED" in
+    "32.0GT/s") TARGET_SPEED=5; TARGET_DESC="Gen 5 (32.0 GT/s)" ;;
     "16.0GT/s") TARGET_SPEED=4; TARGET_DESC="Gen 4 (16.0 GT/s)" ;;
     "8.0GT/s")  TARGET_SPEED=3; TARGET_DESC="Gen 3 (8.0 GT/s)" ;;
     "5.0GT/s")  TARGET_SPEED=2; TARGET_DESC="Gen 2 (5.0 GT/s)" ;;
