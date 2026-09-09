@@ -40,8 +40,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --help       Show this help message"
             echo ""
             echo "RECOMMENDED: Staged approach for verification:"
-            echo "  1. sudo $0 --stage=1        # Reboot and verify Gen 2"
-            echo "  2. sudo $0 --stage=2        # Reboot and verify 80GB + clock"
+            echo "  1. sudo $0 --stage=1        # Power-off and verify Gen 2"
+            echo "  2. sudo $0 --stage=2        # Power-off and verify 80GB + clock"
             echo "  3. sudo $0 --stage=3        # Optional feature unlocks"
             echo ""
             echo "Environment variables:"
@@ -165,10 +165,10 @@ if [ -n "$STAGE" ]; then
             echo -e "${CYAN}║${NC}   ${GREEN}✓ STAGE 1 COMPLETE: PCIe Gen 2 Unlock${CYAN}                   ║${NC}"
             echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════╝${NC}"
             echo
-            echo -e "${YELLOW}!${NC} MANDATORY: Reboot now for Gen 2 to persist:"
-            echo "  sudo reboot"
+            echo -e "${YELLOW}!${NC} MANDATORY: Full power-off/on cycle for Gen 2 to persist:"
+            echo "  sudo shutdown -h now"
             echo
-            echo "After reboot, verify Gen 2 is present:"
+            echo "After power-on, verify Gen 2 is present:"
             echo "  lspci -s ${PCI_FULL} | grep Speed"
             echo "  # Expected: 'Speed 5GT/s' or higher"
             echo
@@ -181,10 +181,10 @@ if [ -n "$STAGE" ]; then
             echo -e "${CYAN}║${NC}   ${GREEN}✓ STAGE 2 COMPLETE: PLM Opening + Core Unlocks${CYAN}            ║${NC}"
             echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════╝${NC}"
             echo
-            echo -e "${YELLOW}!${NC} MANDATORY: Reboot now for 80GB + SM clock to persist:"
-            echo "  sudo reboot"
+            echo -e "${YELLOW}!${NC} MANDATORY: Full power-off/on cycle for 80GB + SM clock to persist:"
+            echo "  sudo shutdown -h now"
             echo
-            echo "After reboot, verify unlock is present:"
+            echo "After power-on, verify unlock is present:"
             echo "  nvidia-smi --query-gpu=memory.total --format=csv,noheader"
             echo "  # Expected: '81378 MiB' or similar (80GB+)"
             echo

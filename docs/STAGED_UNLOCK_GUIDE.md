@@ -43,7 +43,7 @@ sudo ./install.sh --stage=1
 **After Stage 1:**
 ```bash
 # Mandatory reboot
-sudo reboot
+sudo shutdown -h now
 
 # After reboot, verify Gen 2 is present
 lspci -s 0000:XX:YY.Z | grep Speed
@@ -68,7 +68,7 @@ sudo ./install.sh --stage=2
 **After Stage 2:**
 ```bash
 # Mandatory reboot
-sudo reboot
+sudo shutdown -h now
 
 # After reboot, verify unlock is present
 nvidia-smi --query-gpu=memory.total --format=csv,noheader
