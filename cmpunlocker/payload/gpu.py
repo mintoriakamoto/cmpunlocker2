@@ -1,5 +1,10 @@
+import os
 import re
 import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from common.constants import get
 
