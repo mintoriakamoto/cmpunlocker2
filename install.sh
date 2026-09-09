@@ -85,9 +85,9 @@ ok "GPU: ${PCI_FULL} – ${GPU_NAME}"
 
 info "Step 3/6: Verifying driver compatibility"
 # 610.x family (610.43.02+): Falcon BootROM ROP exploit compatible
-DRIVER_VERSION=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)
+DRIVER_VERSION=$(timeout 3 nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)
 if [ -z "$DRIVER_VERSION" ]; then
-    warn "Could not detect driver version (nvidia-smi failed)"
+    warn "Could not detect driver version (nvidia-smi failed or not found)"
 else
     DRIVER_MAJOR=$(echo "$DRIVER_VERSION" | cut -d. -f1)
     case "$DRIVER_MAJOR" in
