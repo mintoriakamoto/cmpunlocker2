@@ -1,6 +1,6 @@
 # cmpunlocker
 
-Unlock tool for the NVIDIA CMP 170HX (GA100) mining card. Restores full A100 compute throughput and full memory capacity (80GB) by exploiting the Falcon BootROM `.fwsignature_ga100` load bug.
+Unlock tool for NVIDIA CMP 170HX (GA100) mining cards. Restores full A100 compute throughput and full memory capacity (64GB or 80GB depending on model) by exploiting the Falcon BootROM `.fwsignature_ga100` load bug.
 
 Targets **nvidia-open driver 580.x** on Linux.
 
@@ -10,7 +10,13 @@ Targets **nvidia-open driver 580.x** on Linux.
 
 ## Background
 
-The CMP 170HX is a physically complete GA100 die — the same silicon as the A100 datacenter GPU — with compute throughput, memory capacity, and other features artificially restricted via OTP fuses and firmware-enforced register locks. The HBM2e dies in the 5 stacks are 16GB each, but the factory strap limits each stack to 2GB. This tool restores those capabilities on hardware you own.
+The CMP 170HX is a physically complete GA100 die — the same silicon as the A100 datacenter GPU — with compute throughput, memory capacity, and other features artificially restricted via OTP fuses and firmware-enforced register locks.
+
+**Two hardware variants exist:**
+- **8GB model** (4 HBM2e stacks × 2GB factory limit) → unlocks to 64GB
+- **10GB model** (5 HBM2e stacks × 2GB factory limit) → unlocks to 80GB
+
+Each stack's HBM2e dies are 16GB, but factory strap limits them to 2GB. This tool restores the full capacity on hardware you own.
 
 ---
 
@@ -37,10 +43,18 @@ That is the only command needed.
 
 To choose a different memory target, set `CMPUNLOCKER_TARGET` before running:
 
+**For 10GB model (5-stack):**
 ```bash
 sudo CMPUNLOCKER_TARGET=unlocked_40gb ./install.sh    # 40GB (safer, fewer refresh issues)
 sudo CMPUNLOCKER_TARGET=unlocked_80gb ./install.sh    # 80GB (default, full capacity)
 sudo CMPUNLOCKER_TARGET=nativ_10gb ./install.sh       # restore factory 10GB state
+```
+
+**For 8GB model (4-stack):**
+```bash
+sudo CMPUNLOCKER_TARGET=unlocked_32gb ./install.sh    # 32GB (safer, fewer refresh issues)
+sudo CMPUNLOCKER_TARGET=unlocked_64gb ./install.sh    # 64GB (default, full capacity)
+sudo CMPUNLOCKER_TARGET=nativ_8gb ./install.sh        # restore factory 8GB state
 ```
 
 ---
