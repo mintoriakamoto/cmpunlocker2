@@ -72,28 +72,23 @@ rm -rf "${INSTALL_DIR}"
 cp -r "${SCRIPT_DIR}" "${INSTALL_DIR}"
 ok "Installed"
 
-info "Step 6/6: Running unlock and enabling service"
-TARGET="${CMPUNLOCKER_TARGET:-unlocked_80gb}"
-python3 "${INSTALL_DIR}/cmpunlocker/payload/pipeline.py" \
-    "${PCI}" "${GSP_PATH}" "${TARGET}"
-ok "Unlock applied"
+info "Step 6/6: Enabling systemd service and rebooting"
 cp "${INSTALL_DIR}/cmpunlocker/daemon/cmpunlocker.service" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable cmpunlocker
-systemctl start cmpunlocker
-ok "Service enabled"
+ok "Service enabled (will run on next boot)"
 
 echo
 echo -e "${CYAN}╔════════════════════════════════════════╗${NC}"
 echo -e "${CYAN}║${NC}   ${GREEN}✓ cmpunlocker installed${CYAN}             ║${NC}"
 echo -e "${CYAN}╚════════════════════════════════════════╝${NC}"
 echo
-echo "Verify: nvidia-smi --query-gpu=clocks.max.sm,memory.total --format=csv,noheader"
-echo "Daemon: journalctl -u cmpunlocker -f"
+echo "System will reboot in 10 seconds..."
+echo "On next boot, the daemon will apply the unlock automatically."
 echo
-echo "Optional: Enable PCIe Gen 4 (if motherboard supports it):"
-echo "  sudo ${INSTALL_DIR}/cmpunlocker/scripts/pcie_gen4_unlock.sh"
-echo "  sudo ${INSTALL_DIR}/cmpunlocker/scripts/pcie_gen4_unlock_bar0.py"
-echo ""
-echo "Optional: Enable PCIe Gen 2 (fallback if Gen 4 unavailable):"
-echo "  Feature is pre-configured in unlock — no additional steps needed"
+echo "Verify after reboot:"
+echo "  nvidia-smi --query-gpu=clocks.max.sm,memory.total --format=csv,noheader"
+echo "  journalctl -u cmpunlocker -f"
+echo
+sleep 10
+systemctl reboot
