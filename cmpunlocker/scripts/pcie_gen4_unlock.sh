@@ -51,9 +51,9 @@ fi
 # Detect GPU
 BDF="${1:-}"
 if [ -z "$BDF" ]; then
-    BDF=$(lspci -nn 2>/dev/null | grep -iE "10de:20(b0|c2|82|b2|b4)" | head -1 | awk '{print $1}')
+    BDF=$(lspci -nn 2>/dev/null | grep -iE "10de:(20b0|20c2|2082|220d|2209)" | head -1 | awk '{print $1}')
     if [ -z "$BDF" ]; then
-        err "No CMP 170HX or A100 found"
+        err "No CMP card found (170HX, 90HX, or 50HX)"
         exit 1
     fi
 fi
