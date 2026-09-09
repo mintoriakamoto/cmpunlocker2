@@ -13,11 +13,12 @@ the values via BAR0.
 import logging
 import sys
 import time
+from pathlib import Path
 
-sys.path.insert(0, "/opt/cmpunlocker")
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from payload.gpu import find_all_gpus
-from payload.pipeline import run_full_unlock
+from cmpunlocker.payload.gpu import find_all_gpus
+from cmpunlocker.payload.pipeline import run_full_unlock
 from unlock.compute import apply_unlock as apply_compute, is_plm_open, is_unlocked
 from unlock.memory import apply_unlock as apply_memory, is_memory_unlocked
 from unlock.features import apply_feature_unlocks, is_pcie_gen4, is_nvlink_enabled
