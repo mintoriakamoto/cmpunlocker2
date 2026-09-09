@@ -73,7 +73,8 @@ def patch_gsp(input_path: str, payload: bytes, output_path: str) -> None:
         if len(payload) < orig_size:
             payload = payload + b"\x00" * (orig_size - len(payload))
 
-    gsp[sig_file_off : sig_file_off + len(payload)] = payload[:orig_size if len(payload) >= orig_size else len(payload)]
+    # Write full payload to GSP firmware
+    gsp[sig_file_off : sig_file_off + len(payload)] = payload
 
     new_strtab_off = len(gsp)
     gsp.extend(strtab)
