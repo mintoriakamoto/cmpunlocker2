@@ -40,6 +40,7 @@ from payload.driver import (
     aggressive_unload, flr_reset, load_module, stop_display_manager, unload_modules,
 )
 from payload.gsp_patch import patch_gsp
+from payload.preflight import run_preflight, PrefightError
 from payload.build import build as build_payload, fill_payload, refill_payload
 
 log = logging.getLogger(__name__)
@@ -105,9 +106,15 @@ def _open_plm_register(pci_full: str, gsp_path: str, stock_sig: bytes,
         time.sleep(5)
         flr_reset(pci_full)
 
-        from payload.bar0 import Bar0
-        with Bar0(pci_full) as bar0:
-            actual = bar0.rd32(write_addr)
+        try:
+            from payload.bar0 import Bar0
+            with Bar0(pci_full) as bar0:
+                actual = bar0.rd32(write_addr)
+        except RuntimeError as e:
+            log.error("[%s] BAR0 access failed (attempt %d): %s",
+                      pci_full, attempt + 1, e)
+            continue
+
         if actual == write_value:
             log.info("[%s] %s (0x%08x) opened (attempt %d, reg=0x%08x)",
                      pci_full, reg_name, write_addr, attempt + 1, actual)
@@ -121,9 +128,14 @@ def _open_plm_register(pci_full: str, gsp_path: str, stock_sig: bytes,
 def _write_bar0(pci_full: str, addr: int, value: int, label: str) -> bool:
     """Write a value to BAR0 and verify it stuck."""
     from payload.bar0 import Bar0
-    with Bar0(pci_full) as bar0:
-        bar0.wr32(addr, value)
-        actual = bar0.rd32(addr)
+    try:
+        with Bar0(pci_full) as bar0:
+            bar0.wr32(addr, value)
+            actual = bar0.rd32(addr)
+    except RuntimeError as e:
+        log.error("[%s] BAR0 access failed for %s: %s", pci_full, label, e)
+        return False
+
     if actual == value:
         log.info("[%s] %s = 0x%08x OK", pci_full, label, value)
         return True
@@ -135,6 +147,13 @@ def _write_bar0(pci_full: str, addr: int, value: int, label: str) -> bool:
 def run_full_unlock(pci_full: str, gsp_path: str = None,
                      target: str = None) -> bool:
     """Run the full unlock pipeline (mirrors modified driver)."""
+    # Preflight validation: catch common issues early
+    try:
+        run_preflight(pci_full)
+    except PrefightError as e:
+        log.error("Preflight check failed: %s", e)
+        return False
+
     if gsp_path is None:
         gsp_path = _find_gsp()
     if target is None:
