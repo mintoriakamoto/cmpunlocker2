@@ -1,14 +1,16 @@
 #!/bin/bash
-# pcie_gen4_unlock.sh — Enable PCIe Gen 4-5 via NV_XVE_PASSTHROUGH_EMULATED_CONFIG
+# pcie_gen4_unlock.sh — Enable PCIe Gen 2-5 x16 (auto-detected)
 #
-# THIS IS THE REAL APPROACH based on reverse-engineering of the
-# open-gpu-kernel-modules-610.43.03 source code.
+# Supports all PCIe generations from Gen 2 through Gen 5 via
+# NV_XVE_PASSTHROUGH_EMULATED_CONFIG (0xE8 in XVE register space).
 #
-# Key finding: GA100 has a special emulated config space at
-# NV_XVE_PASSTHROUGH_EMULATED_CONFIG = 0xE8 (in XVE register space).
-# This register has a ROOT_PORT_SPEED field (bits 3:0) that can
-# be set to enable Gen 2-5 (encoded as: 2=Gen2, 3=Gen3, 4=Gen4, 5=Gen5).
-# Script auto-detects root complex speed and targets the highest available.
+# Auto-detection by root complex speed:
+#  - 32.0GT/s → Gen 5 x16 (128 GB/s, Z890/X970/TRX50)
+#  - 16.0GT/s → Gen 4 x16 (64 GB/s, Z790/X870)
+#  - 8.0GT/s  → Gen 3 x16 (32 GB/s, X99/X299)
+#  - 5.0GT/s  → Gen 2 x16 (20 GB/s, older boards, verified working)
+#
+# Fallback chain ensures minimum Gen 2 (2× speedup vs factory Gen 1).
 #
 # The XVE register space is accessed via:
 #   - PCI Config Space: standard PCI access

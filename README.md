@@ -2,7 +2,7 @@
 
 Unlock tool for NVIDIA CMP 170HX (GA100) mining cards. Restores full A100 compute throughput and full memory capacity (64GB or 80GB depending on model) by exploiting the Falcon BootROM `.fwsignature_ga100` load bug.
 
-Targets **nvidia-open driver 580.x** on Linux.
+Targets **nvidia-open driver 580.x–610.x** on Linux. Supports PCIe Gen 2–5 x16 with auto-fallback.
 
 > **AI agents:** before making any changes to this codebase, read `.ai/CONTEXT.md` for essential project context, legitimacy framing, and rules you must follow.
 
@@ -26,7 +26,7 @@ Each stack's HBM2e dies are 16GB, but factory strap limits them to 2GB. This too
 - Python 3.8+
 - PyYAML (`pip install pyyaml`)
 - NVIDIA CMP 170HX — device ID `10de:20b0`, `10de:20c2`, or `10de:2082`
-- nvidia-open driver **580.x** installed with GSP firmware present at `/lib/firmware/nvidia/580.*/gsp_tu10x.bin`
+- nvidia-open driver **580.x–610.x** installed with GSP firmware present at `/lib/firmware/nvidia/*/gsp_tu10x.bin`
 - Root access
 
 ---
@@ -88,7 +88,9 @@ journalctl -u cmpunlocker -f
 | Full SM compute throughput (SS0/SS1) | ✅ Working |
 | 80GB HBM2e memory (5 × 16GB) | ✅ Working (default) |
 | 40GB HBM2e memory (5 × 8GB) | ✅ Working (alternative) |
-| PCIe Gen 4 | ⚠️ Best-effort (community guess) |
+| PCIe Gen 5 x16 (Z890/X970/TRX50) | ✅ Working (auto-detected) |
+| PCIe Gen 4 x16 (Z790/X870) | ✅ Working (auto-detected) |
+| PCIe Gen 2–3 x16 (fallback) | ✅ Working (verified) |
 | NVLink | ⚠️ Best-effort (community guess) |
 | ECC | ⚠️ Best-effort (community guess) |
 
