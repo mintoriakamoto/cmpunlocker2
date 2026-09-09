@@ -210,6 +210,13 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
     targets = get('memory_unlock.targets')
     mem = targets[target]
 
+    # Initialize WPR2 registers (may be required before CFG1 writes stick)
+    log.info("[%s] Initializing WPR2 memory protection registers", pci_full)
+    wpr2_lo_ok = _write_bar0(pci_full, get('host_bar0_writes.wpr2_lo.addr'),
+                              get('host_bar0_writes.wpr2_lo.value'), 'WPR2_LO')
+    wpr2_hi_ok = _write_bar0(pci_full, get('host_bar0_writes.wpr2_hi.addr'),
+                              get('host_bar0_writes.wpr2_hi.value'), 'WPR2_HI')
+
     log.info("[%s] Writing memory unlock: CFG1=0x%08x LMR=0x%08x",
              pci_full, mem['cfg1'], mem['lmr'])
     cfg1_ok = _write_bar0(pci_full, get('memory_unlock.cfg1.addr'),
