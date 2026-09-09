@@ -2,7 +2,7 @@ import mmap
 import os
 import struct
 
-from common.constants import get
+from cmpunlocker.common.constants import get
 from .gpu import bar0_path
 
 

@@ -217,27 +217,28 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
     wpr2_hi_ok = _write_bar0(pci_full, get('host_bar0_writes.wpr2_hi.addr'),
                               get('host_bar0_writes.wpr2_hi.value'), 'WPR2_HI')
 
-    # Read current CFG1 state - firmware tells us the unlock value by returning current state
-    # When at 10GB: current = 0x02449000, unlock to that, then write target
-    # When at 40GB: current = 0x0144b000, unlock to that, then write target
+    # CRITICAL: Firmware signals the correct LMR value by returning it on read.
+    # We MUST write the firmware-read LMR value FIRST before CFG1 will accept changes.
+    # This is the "unlock sequence": write firmware-signaled LMR → then write CFG1 target.
     cfg1_addr = get('memory_unlock.cfg1.addr')
     lmr_addr = get('memory_unlock.lmr.addr')
 
     from payload.bar0 import Bar0
     with Bar0(pci_full) as bar0:
-        current_cfg1 = bar0.rd32(cfg1_addr)
+        # Read the firmware-signaled LMR value (this is the UNLOCK value)
+        firmware_lmr = bar0.rd32(lmr_addr)
+        log.info("[%s] Firmware-signaled LMR: 0x%08x (will use this to unlock)", pci_full, firmware_lmr)
 
     log.info("[%s] Writing memory unlock: CFG1=0x%08x LMR=0x%08x",
              pci_full, mem['cfg1'], mem['lmr'])
-    log.info("[%s] Current CFG1 state: 0x%08x (using as unlock value)", pci_full, current_cfg1)
 
-    # Try writing target value twice: firmware might need two writes to accept new value
-    log.info("[%s] Phase 1: Pre-write target 0x%08x", pci_full, mem['cfg1'])
-    _write_bar0(pci_full, cfg1_addr, mem['cfg1'], 'CFG1_PRE')
+    # Phase 1: Write firmware-signaled LMR value (this unlocks CFG1)
+    log.info("[%s] Phase 1: Write firmware-signaled LMR=0x%08x (unlock key)", pci_full, firmware_lmr)
+    lmr_ok = _write_bar0(pci_full, lmr_addr, firmware_lmr, 'LMR_UNLOCK')
 
-    log.info("[%s] Phase 2: Write target 0x%08x (confirmed)", pci_full, mem['cfg1'])
+    # Phase 2: Write CFG1 target (now that LMR is correct, CFG1 should accept it)
+    log.info("[%s] Phase 2: Write CFG1 target=0x%08x", pci_full, mem['cfg1'])
     cfg1_ok = _write_bar0(pci_full, cfg1_addr, mem['cfg1'], 'CFG1')
-    lmr_ok  = _write_bar0(pci_full, lmr_addr, mem['lmr'], 'LMR')
 
     ss0_addr = get('host_bar0_writes.ss0.addr')
     ss0_val  = get('host_bar0_writes.ss0.value')
