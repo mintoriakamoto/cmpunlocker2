@@ -86,8 +86,16 @@ def main() -> None:
     log.info("Found %d GPU(s): %s", len(gpus), ", ".join(gpus))
 
     for pci in gpus:
-        log.info("[%s] Running initial unlock", pci)
-        _unlock_card(pci)
+        # Check if unlock values are already present before attempting exploit
+        mem_ok = is_memory_unlocked(pci)
+        compute_ok = is_unlocked(pci)
+        if mem_ok and compute_ok:
+            log.info("[%s] Unlock values already present (mem=%s compute=%s), skipping exploit",
+                     pci, mem_ok, compute_ok)
+        else:
+            log.info("[%s] Unlock values missing (mem=%s compute=%s), running initial exploit",
+                     pci, mem_ok, compute_ok)
+            _unlock_card(pci)
 
     log.info("Entering monitor loop (interval=%ds)", CHECK_INTERVAL)
     while True:
