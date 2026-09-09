@@ -31,9 +31,14 @@ def unlock_pcie_gen5(pci_full: str) -> bool:
     Unlock PCIe Gen 5 x8 capability.
 
     Must be called WHILE PLM IS OPEN (during ROP exploit execution).
-    Writes PCIe XVE configuration register that controls Gen capability.
+    Writes PCIe XVE OVERRIDE register that controls Gen capability.
 
-    Target register: 0x88ff4 (XVE) - observed in kernel logs as PLM[4]
+    Target register: 0x8872c (XVE_OVR) - the firmware's override register for PCIe Gen
+    Observed in kernel logs: "PCIe XVE_OVR@8872c=0x00000006"
+
+    Values:
+    - 0x05: Gen 5 (32.0 GT/s)
+    - 0x06: Gen 5 x8 (per firmware debug output)
 
     Returns:
         True if Gen 5 writes succeeded and stuck, False otherwise.
@@ -42,38 +47,37 @@ def unlock_pcie_gen5(pci_full: str) -> bool:
 
     try:
         with Bar0(pci_full) as bar0:
-            # XVE register at 0x88ff4 - this is the register the firmware
-            # actually tries to open during initialization (from kernel logs)
-            xve_addr = 0x88ff4
+            # XVE_OVR register at 0x8872c - the firmware's PCIe Gen override register
+            # Kernel logs show this being set to 0x00000006 for Gen 5 x8
+            xve_ovr_addr = 0x8872c
 
-            log.info("[%s] Writing XVE (0x%06x) with Gen 5 capability",
-                     pci_full, xve_addr)
+            log.info("[%s] Writing XVE_OVR (0x%06x) with Gen 5 x8 value",
+                     pci_full, xve_ovr_addr)
 
-            # Read current value first
-            current = bar0.rd32(xve_addr)
-            log.info("[%s] XVE current: 0x%08x", pci_full, current)
+            # Read current value
+            current = bar0.rd32(xve_ovr_addr)
+            log.info("[%s] XVE_OVR current: 0x%08x", pci_full, current)
 
-            # Write Gen 5 (0x5) to the speed bits
-            # Try writing 0x05 directly first
-            bar0.wr32(xve_addr, 0x00000005)
-            val = bar0.rd32(xve_addr)
-            log.info("[%s] XVE after write: 0x%08x", pci_full, val)
+            # Firmware logs show 0x00000006 for Gen 5 x8
+            # Try writing 0x06 first
+            bar0.wr32(xve_ovr_addr, 0x00000006)
+            val = bar0.rd32(xve_ovr_addr)
+            log.info("[%s] XVE_OVR after write: 0x%08x", pci_full, val)
 
-            if (val & 0xf) == 0x05:
-                log.info("[%s] ✓ Gen 5 enabled on XVE register!", pci_full)
+            if val == 0x00000006:
+                log.info("[%s] ✓ Gen 5 x8 enabled on XVE_OVR!", pci_full)
                 return True
 
-            # Try alternative: merge Gen 5 with current value
-            new_val = (current & ~0xf) | 0x05
-            bar0.wr32(xve_addr, new_val)
-            check = bar0.rd32(xve_addr)
-            log.info("[%s] XVE after merge: 0x%08x", pci_full, check)
+            # Try Gen 5 x16 value
+            bar0.wr32(xve_ovr_addr, 0x00000005)
+            val2 = bar0.rd32(xve_ovr_addr)
+            log.info("[%s] XVE_OVR Gen5 x16 attempt: 0x%08x", pci_full, val2)
 
-            if (check & 0xf) == 0x05:
-                log.info("[%s] ✓ Gen 5 enabled (merged with current)", pci_full)
+            if val2 == 0x00000005:
+                log.info("[%s] ✓ Gen 5 (x16) enabled", pci_full)
                 return True
 
-            log.warning("[%s] Gen 5 write did not stick on XVE register", pci_full)
+            log.warning("[%s] Gen 5 write did not stick on XVE_OVR", pci_full)
             return False
 
     except Exception as e:
