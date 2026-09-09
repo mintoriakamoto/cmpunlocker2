@@ -35,11 +35,19 @@ log = logging.getLogger(__name__)
 #   - Link retraining via PCI Link Control register
 #   - Platform support from the root complex
 FEATURE_ORDER = [
+    "pcie_gen2",
     "nvlink_enable",
     "arc_mutex",
     "ecc_enable",
     "ecc_scrub",
 ]
+
+
+def is_pcie_gen2(pci_full: str) -> bool:
+    """Check if PCIe Link Control 2 is set to Gen 2 target speed."""
+    pcie = get('feature_unlocks.pcie_gen2')
+    with Bar0(pci_full) as bar0:
+        return bar0.rd32(pcie['addr']) == pcie['value']
 
 
 def is_pcie_gen4(pci_full: str) -> bool:
