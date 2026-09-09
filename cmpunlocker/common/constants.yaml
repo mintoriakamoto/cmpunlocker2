@@ -150,15 +150,20 @@ feature_unlocks:
     value: 0x00000010
     note: "ECC scrub interval (community guess, NOT verified)"
 
-# PLM (Platform Lock Manager) registers - per community analysis.
-# 4 separate PLM registers must be opened before CFG1/LMR/SS0/SS1 writes
-# are accepted by the HBM controller. Each is opened by refilling the
-# ROP payload and triggering the BootROM load.
+# PLM (Platform Lock Manager) registers - per kernel debug logs analysis
+# 8 separate PLM registers must be opened for full initialization:
+# - PLM[0-3]: Core memory/compute unlock (WPR_CFG, FBPA, WPR, FEAT)
+# - PLM[4-7]: PCIe/feature unlock (XVE, XVE_B, XVE_C, FEAT2)
+# Each is opened by refilling ROP payload and triggering BootROM load.
 plm_table:
   - { addr: 0x001FA7CC, value: 0xFFFFf0ff, name: "WPR_CFG" }
   - { addr: 0x009A0148, value: 0xFFFFFFFF, name: "FBPA"     }
   - { addr: 0x001FA7C4, value: 0xFFFFFFFF, name: "WPR"      }
   - { addr: 0x00823804, value: 0xFFFFFFFF, name: "FEAT"     }
+  - { addr: 0x00088FF4, value: 0xFFFFFFFF, name: "XVE"      }
+  - { addr: 0x00088AB4, value: 0xFFFFFFFF, name: "XVE_B"    }
+  - { addr: 0x00088FF8, value: 0xFFFFFFFF, name: "XVE_C"    }
+  - { addr: 0x00823B00, value: 0xFFFFFFFF, name: "FEAT2"    }
 
 # 24-DWORD ROP payload (community-verified on A100 80GB silicon).
 # Placed in the .fwsignature_ga100 ELF section. The BootROM loads it
