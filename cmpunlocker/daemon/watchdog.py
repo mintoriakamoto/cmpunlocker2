@@ -26,7 +26,7 @@ from cmpunlocker.payload.gpu import find_all_gpus
 from cmpunlocker.payload.pipeline import run_full_unlock
 from unlock.compute import apply_unlock as apply_compute, is_plm_open, is_unlocked
 from unlock.memory import apply_unlock as apply_memory, is_memory_unlocked
-from unlock.features import apply_feature_unlocks, is_pcie_gen2, is_pcie_gen4, is_nvlink_enabled
+from unlock.features import apply_feature_unlocks, is_pcie_gen2, is_pcie_gen3, is_pcie_gen4, is_pcie_gen5, is_nvlink_enabled
 
 CHECK_INTERVAL = int(os.environ.get("CMPUNLOCKER_CHECK_INTERVAL", "1"))  # seconds
 LOCK_FILE = "/var/lock/cmpunlocker.lock"
@@ -106,7 +106,8 @@ def _check_card(pci: str) -> None:
             else:
                 log.warning("[%s] Memory reapply failed: %s", pci, msg)
 
-        if not is_pcie_gen2(pci) or not is_pcie_gen4(pci) or not is_nvlink_enabled(pci):
+        if (not is_pcie_gen2(pci) or not is_pcie_gen3(pci) or not is_pcie_gen4(pci)
+            or not is_pcie_gen5(pci) or not is_nvlink_enabled(pci)):
             apply_feature_unlocks(pci)
 
     except Exception as exc:
