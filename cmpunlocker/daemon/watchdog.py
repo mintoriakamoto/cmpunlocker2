@@ -85,30 +85,49 @@ def _unlock_card(pci: str) -> None:
         _release_lock(lock_fd)
 
 
-def _check_card(pci: str) -> None:
+def _check_card(pci: str, state: dict) -> None:
     try:
         if not is_plm_open(pci):
             log.warning("[%s] PLM closed — re-running full unlock", pci)
+            state[pci] = {"plm": False, "compute": False, "memory": False}
             _unlock_card(pci)
             return
 
-        if not is_unlocked(pci):
+        # Track compute unlock state
+        compute_ok = is_unlocked(pci)
+        if not compute_ok:
             ok, msg = apply_compute(pci)
             if ok:
                 log.info("[%s] Reapplied SS0/SS1", pci)
+                state[pci]["compute"] = True
             else:
                 log.warning("[%s] Compute reapply failed: %s", pci, msg)
+                state[pci]["compute"] = False
+        elif state[pci].get("compute") == False:
+            log.info("[%s] Compute unlock recovered", pci)
+            state[pci]["compute"] = True
 
-        if not is_memory_unlocked(pci):
+        # Track memory unlock state
+        memory_ok = is_memory_unlocked(pci)
+        if not memory_ok:
             ok, msg = apply_memory(pci)
             if ok:
                 log.info("[%s] Reapplied memory unlock", pci)
+                state[pci]["memory"] = True
             else:
                 log.warning("[%s] Memory reapply failed: %s", pci, msg)
+                state[pci]["memory"] = False
+        elif state[pci].get("memory") == False:
+            log.info("[%s] Memory unlock recovered", pci)
+            state[pci]["memory"] = True
 
-        if (not is_pcie_gen2(pci) or not is_pcie_gen3(pci) or not is_pcie_gen4(pci)
-            or not is_pcie_gen5(pci) or not is_nvlink_enabled(pci)):
-            apply_feature_unlocks(pci)
+        # Only check features if core unlocks are in place
+        if compute_ok and memory_ok:
+            if (not is_pcie_gen2(pci) or not is_pcie_gen3(pci) or not is_pcie_gen4(pci)
+                or not is_pcie_gen5(pci) or not is_nvlink_enabled(pci)):
+                apply_feature_unlocks(pci)
+
+        state[pci]["plm"] = True
 
     except Exception as exc:
         log.error("[%s] Monitor error: %s", pci, exc)
@@ -136,10 +155,11 @@ def main() -> None:
         _unlock_card(pci)
 
     log.info("Entering monitor loop (interval=%ds)", CHECK_INTERVAL)
+    state = {pci: {"plm": True, "compute": True, "memory": True} for pci in gpus}
     try:
         while True:
             for pci in gpus:
-                _check_card(pci)
+                _check_card(pci, state)
             time.sleep(CHECK_INTERVAL)
     except KeyboardInterrupt:
         log.info("Daemon shutting down gracefully")
