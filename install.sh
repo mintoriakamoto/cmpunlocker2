@@ -40,7 +40,6 @@ if [ -z "$LSPCI_LINE" ]; then
     exit 1
 fi
 PCI=$(echo "$LSPCI_LINE" | awk '{print $1}')
-PCI_FULL="0000:${PCI}"
 GPU_ID=$(echo "$LSPCI_LINE" | grep -oE "10de:([0-9a-f]+)" | cut -d: -f2)
 case "$GPU_ID" in
   20b0|20c2|2082) GPU_NAME="CMP 170HX (GA100)" ;;
@@ -48,7 +47,7 @@ case "$GPU_ID" in
   2209) GPU_NAME="CMP 50HX (GH100)" ;;
   *) GPU_NAME="Unknown CMP" ;;
 esac
-ok "GPU: ${PCI_FULL} – ${GPU_NAME}"
+ok "GPU: ${PCI} – ${GPU_NAME}"
 
 info "Step 3/6: Verifying driver compatibility"
 # Safety gate: check driver version (from pearlfortune safety approach)
@@ -68,18 +67,16 @@ GSP_PATH=$(ls /lib/firmware/nvidia/*/gsp_tu10x.bin 2>/dev/null | sort -rV | head
 [ -z "$GSP_PATH" ] && err "No GSP firmware found" && exit 1
 ok "GSP: $GSP_PATH"
 
-info "Step 4/6: Installing to ${INSTALL_DIR}"
+info "Step 5/6: Installing to ${INSTALL_DIR}"
 rm -rf "${INSTALL_DIR}"
 cp -r "${SCRIPT_DIR}" "${INSTALL_DIR}"
 ok "Installed"
 
-info "Step 5/6: Running unlock"
+info "Step 6/6: Running unlock and enabling service"
 TARGET="${CMPUNLOCKER_TARGET:-unlocked_80gb}"
 python3 "${INSTALL_DIR}/cmpunlocker/payload/pipeline.py" \
-    "${PCI_FULL}" "${GSP_PATH}" "${TARGET}"
+    "${PCI}" "${GSP_PATH}" "${TARGET}"
 ok "Unlock applied"
-
-info "Step 6/6: Enabling systemd service"
 cp "${INSTALL_DIR}/cmpunlocker/daemon/cmpunlocker.service" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable cmpunlocker
