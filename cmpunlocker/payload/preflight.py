@@ -50,8 +50,11 @@ def _check_gpu_in_lspci(pci_full: str) -> None:
 
     ids = {f"10de:{did}" for did in get('gpu.device_ids')}
     found = False
+    # Strip leading domain (0000:) for lspci comparison
+    pci_short = pci_full.split(':')[-2:] if ':' in pci_full else pci_full
+    pci_short = ':'.join(pci_short)
     for line in result.stdout.splitlines():
-        if pci_full in line and any(dev_id in line for dev_id in ids):
+        if (pci_full in line or pci_short in line) and any(dev_id in line for dev_id in ids):
             found = True
             break
 
