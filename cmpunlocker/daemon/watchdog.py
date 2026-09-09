@@ -89,10 +89,10 @@ def _unlock_card(pci: str) -> None:
 def _check_card(pci: str, state: dict) -> None:
     try:
         stage = get_current_stage(pci)
-        if stage < 3:
+        if stage < 2:
             # Staged unlock incomplete, don't attempt reapply
             if state[pci].get("_stage_warning") != stage:
-                log.warning("[%s] Unlock incomplete (stage %d/3), skipping reapply", pci, stage)
+                log.warning("[%s] Unlock incomplete (stage %d/2), skipping reapply", pci, stage)
                 state[pci]["_stage_warning"] = stage
             return
 
