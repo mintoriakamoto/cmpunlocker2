@@ -177,7 +177,14 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
     log.info("[%s] Saving stock GSP signature", pci_full)
     stock_sig = _save_stock_signature(gsp_path)
 
-    plm_table = get('plm_table')
+    # Select PLM table based on target - 40GB and 80GB use DIFFERENT PLM values!
+    if target == 'unlocked_80gb':
+        plm_table = get('plm_table_80gb')
+        log.info("[%s] Using 80GB-specific PLM unlock values (all-1s pattern)", pci_full)
+    else:
+        plm_table = get('plm_table_40gb')
+        log.info("[%s] Using 40GB PLM unlock values", pci_full)
+
     plm_open_count = 0
     for entry in plm_table:
         ok = _open_plm_register(

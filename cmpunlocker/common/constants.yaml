@@ -150,12 +150,16 @@ feature_unlocks:
     value: 0x00000010
     note: "ECC scrub interval (community guess, NOT verified)"
 
-# PLM (Platform Lock Manager) registers - per kernel debug logs analysis
+# PLM (Platform Lock Manager) registers - CRITICAL: Different for 40GB vs 80GB!
 # 8 separate PLM registers must be opened for full initialization:
 # - PLM[0-3]: Core memory/compute unlock (WPR_CFG, FBPA, WPR, FEAT)
 # - PLM[4-7]: PCIe/feature unlock (XVE, XVE_B, XVE_C, FEAT2)
 # Each is opened by refilling ROP payload and triggering BootROM load.
-plm_table:
+#
+# DISCOVERY: 40GB and 80GB require DIFFERENT PLM unlock signatures!
+# Discovered in test b9kujtq5y.output - 80GB uses all-1s pattern (0xffffffff)
+
+plm_table_40gb:  # For 10GB → 40GB unlock
   - { addr: 0x001FA7CC, value: 0x0004cb8f, name: "WPR_CFG" }
   - { addr: 0x009A0148, value: 0xffffff8f, name: "FBPA"     }
   - { addr: 0x001FA7C4, value: 0x0004cb8f, name: "WPR"      }
@@ -164,6 +168,19 @@ plm_table:
   - { addr: 0x00088AB4, value: 0xFFFFFFFF, name: "XVE_B"    }
   - { addr: 0x00088FF8, value: 0xFFFFFFFF, name: "XVE_C"    }
   - { addr: 0x00823B00, value: 0xfffffcee, name: "FEAT2"    }
+
+plm_table_80gb:  # For 10GB → 80GB unlock (discovered values)
+  - { addr: 0x001FA7CC, value: 0xfffff0ff, name: "WPR_CFG" }  # All-1s pattern
+  - { addr: 0x009A0148, value: 0xffffffff, name: "FBPA"     }  # All-1s
+  - { addr: 0x001FA7C4, value: 0xffffffff, name: "WPR"      }  # All-1s
+  - { addr: 0x00823804, value: 0xffffffff, name: "FEAT"     }  # All-1s (vs 0xfffffcee)
+  - { addr: 0x00088FF4, value: 0xffffffff, name: "XVE"      }  # All-1s (vs 0xffffff8f)
+  - { addr: 0x00088AB4, value: 0xFFFFFFFF, name: "XVE_B"    }  # (same)
+  - { addr: 0x00088FF8, value: 0xFFFFFFFF, name: "XVE_C"    }  # (same)
+  - { addr: 0x00823B00, value: 0xffffffff, name: "FEAT2"    }  # All-1s (vs 0xfffffcee)
+
+# Default: use 80GB since that's the target
+plm_table: plm_table_80gb
 
 # 24-DWORD ROP payload (community-verified on A100 80GB silicon).
 # Placed in the .fwsignature_ga100 ELF section. The BootROM loads it
