@@ -62,19 +62,17 @@ def patch_gsp(input_path: str, payload: bytes, output_path: str) -> None:
     # Read the original section size from the section header
     orig_size = struct.unpack_from("<Q", shdrs, sig_idx * e_shentsize + 0x20)[0]
 
-    # If payload is larger than the on-disk section, extend the file
+    # Always write exactly to the section size. The payload (63KB DMEM buffer)
+    # is loaded by the kernel at runtime, not from the ELF file. The on-disk
+    # section is only 4KB and must stay that way to avoid breaking the ELF format.
     if len(payload) > orig_size:
-        if len(gsp) < sig_file_off + len(payload):
-            gsp.extend(b"\x00" * (sig_file_off + len(payload) - len(gsp)))
-        # Update the section header to reflect new size
-        struct.pack_into("<Q", shdrs, sig_idx * e_shentsize + 0x20, len(payload))
-        # Write the full extended payload
-        gsp[sig_file_off : sig_file_off + len(payload)] = payload
-    else:
-        # Pad payload to section size if smaller
-        if len(payload) < orig_size:
-            payload = payload + b"\x00" * (orig_size - len(payload))
-        gsp[sig_file_off : sig_file_off + len(payload)] = payload
+        # Truncate to section size (kernel will re-create full DMEM at runtime)
+        payload = payload[:orig_size]
+    elif len(payload) < orig_size:
+        # Pad with zeros to section size
+        payload = payload + b"\x00" * (orig_size - len(payload))
+
+    gsp[sig_file_off : sig_file_off + len(payload)] = payload
 
     # Ensure buffer is large enough for section headers if they're beyond payload
     required_size = e_shoff + len(shdrs)
