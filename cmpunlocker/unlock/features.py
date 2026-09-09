@@ -28,13 +28,16 @@ log = logging.getLogger(__name__)
 
 
 # Order of feature unlock execution
-# NOTE: pcie_gen4 is EXCLUDED because the value 0x000118 is in PCIe
-# Config Space, NOT in BAR0 MMIO. Writing it to BAR0 has no effect.
-# Real PCIe Gen 4 unlock would require:
-#   - Writing to PCIe config space (not BAR0)
-#   - Link retraining via PCI Link Control register
-#   - Platform support from the root complex
+# PCIe Gen 2-5: Written to XVE register space via BAR0. The actual link
+# speed negotiation depends on root complex capability and requires
+# pcie_gen4_unlock.sh for proper link retraining. These BAR0 writes
+# set the target speed, but real negotiation happens via PCI config space.
+# For guaranteed Gen 4/5, use: sudo ./pcie_gen4_unlock.sh [BDF]
 FEATURE_ORDER = [
+    "pcie_gen2",
+    "pcie_gen3",
+    "pcie_gen4",
+    "pcie_gen5",
     "nvlink_enable",
     "arc_mutex",
     "ecc_enable",
@@ -42,9 +45,30 @@ FEATURE_ORDER = [
 ]
 
 
+def is_pcie_gen2(pci_full: str) -> bool:
+    """Check if PCIe target speed is Gen 2 (5.0 GT/s)."""
+    pcie = get('feature_unlocks.pcie_gen2')
+    with Bar0(pci_full) as bar0:
+        return bar0.rd32(pcie['addr']) == pcie['value']
+
+
+def is_pcie_gen3(pci_full: str) -> bool:
+    """Check if PCIe target speed is Gen 3 (8.0 GT/s)."""
+    pcie = get('feature_unlocks.pcie_gen3')
+    with Bar0(pci_full) as bar0:
+        return bar0.rd32(pcie['addr']) == pcie['value']
+
+
 def is_pcie_gen4(pci_full: str) -> bool:
-    """Check if PCIe Link Control 2 is set to Gen 4 target speed."""
+    """Check if PCIe target speed is Gen 4 (16.0 GT/s)."""
     pcie = get('feature_unlocks.pcie_gen4')
+    with Bar0(pci_full) as bar0:
+        return bar0.rd32(pcie['addr']) == pcie['value']
+
+
+def is_pcie_gen5(pci_full: str) -> bool:
+    """Check if PCIe target speed is Gen 5 (32.0 GT/s)."""
+    pcie = get('feature_unlocks.pcie_gen5')
     with Bar0(pci_full) as bar0:
         return bar0.rd32(pcie['addr']) == pcie['value']
 

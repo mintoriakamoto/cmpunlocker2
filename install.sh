@@ -31,34 +31,68 @@ ok "Environment OK"
 info "Step 2/6: Detecting GPU"
 # Support for CMP 170HX (GA100), 90HX (GH100), 50HX (GH100)
 # From ecosystem research: pearlfortune extends hardware support
-LSPCI_LINE=$(lspci -nn 2>/dev/null | grep -iE "10de:(20b0|20c2|2082|220d|2209)" | head -1)
-if [ -z "$LSPCI_LINE" ]; then
-    err "No CMP card found"
-    echo "  Supported: CMP 170HX (10de:20b0/20c2/2082)"
-    echo "  Supported: CMP 90HX (10de:220d)"
-    echo "  Supported: CMP 50HX (10de:2209)"
-    exit 1
+
+# Try environment variable override first
+if [ -n "${CMPUNLOCKER_PCI:-}" ]; then
+    PCI_FULL="$CMPUNLOCKER_PCI"
+    info "Using PCI from CMPUNLOCKER_PCI: $PCI_FULL"
+else
+    PCI=""
+    # Try lspci first
+    if command -v lspci &>/dev/null; then
+        PCI=$(lspci -nn 2>/dev/null | grep -iE "10de:(20b0|20c2|2082|220d|2209)" | head -1 | awk '{print $1}')
+    fi
+    # Fall back to sysfs search
+    if [ -z "$PCI" ]; then
+        for dev in /sys/bus/pci/devices/*/; do
+            vendor=$(cat "$dev/vendor" 2>/dev/null)
+            device=$(cat "$dev/device" 2>/dev/null)
+            if [ "$vendor" = "0x10de" ] && [ "$device" = "0x2082" ]; then
+                PCI=$(basename "$dev")
+                break
+            fi
+        done
+    fi
+    if [ -z "$PCI" ]; then
+        err "No CMP card found via lspci or sysfs"
+        echo "  Supported: CMP 170HX (10de:20b0/20c2/2082)"
+        echo "  Supported: CMP 90HX (10de:220d)"
+        echo "  Supported: CMP 50HX (10de:2209)"
+        echo ""
+        echo "  Manual override: export CMPUNLOCKER_PCI=0000:XX:YY.Z"
+        exit 1
+    fi
+    PCI_FULL="0000:${PCI}"
+    # Remove domain prefix if already present (01:00.0 -> 01:00.0, 0000:01:00.0 -> 01:00.0)
+    PCI_FULL=$(echo "$PCI_FULL" | sed 's/^0000://')
+    PCI_FULL="0000:${PCI_FULL}"
 fi
-PCI=$(echo "$LSPCI_LINE" | awk '{print $1}')
-GPU_ID=$(echo "$LSPCI_LINE" | grep -oE "10de:([0-9a-f]+)" | cut -d: -f2)
+
+# Extract device ID from sysfs
+if [ -f "/sys/bus/pci/devices/$PCI_FULL/device" ]; then
+    DEVICE_HEX=$(cat "/sys/bus/pci/devices/$PCI_FULL/device" 2>/dev/null)
+    GPU_ID=$(echo "$DEVICE_HEX" | sed 's/^0x//')
+else
+    GPU_ID="unknown"
+fi
 case "$GPU_ID" in
   20b0|20c2|2082) GPU_NAME="CMP 170HX (GA100)" ;;
   220d) GPU_NAME="CMP 90HX (GH100)" ;;
   2209) GPU_NAME="CMP 50HX (GH100)" ;;
   *) GPU_NAME="Unknown CMP" ;;
 esac
-ok "GPU: ${PCI} – ${GPU_NAME}"
+ok "GPU: ${PCI_FULL} – ${GPU_NAME}"
 
 info "Step 3/6: Verifying driver compatibility"
-# Safety gate: check driver version (from pearlfortune safety approach)
-DRIVER_VERSION=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)
+# 610.x family (610.43.02+): Falcon BootROM ROP exploit compatible
+DRIVER_VERSION=$(timeout 3 nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | grep -v "^No devices" | head -1)
 if [ -z "$DRIVER_VERSION" ]; then
-    warn "Could not detect driver version (nvidia-smi failed)"
+    warn "Could not detect driver version (nvidia-smi failed or not found)"
 else
     DRIVER_MAJOR=$(echo "$DRIVER_VERSION" | cut -d. -f1)
     case "$DRIVER_MAJOR" in
-        58|59|60|61) ok "Driver ${DRIVER_VERSION} (verified compatible)" ;;
-        *) warn "Driver ${DRIVER_VERSION} (untested, may not work)" ;;
+        61) ok "Driver ${DRIVER_VERSION} (610.x verified compatible)" ;;
+        *) warn "Driver ${DRIVER_VERSION} (may not work, 610.x recommended)" ;;
     esac
 fi
 
@@ -67,28 +101,35 @@ GSP_PATH=$(ls /lib/firmware/nvidia/*/gsp_tu10x.bin 2>/dev/null | sort -rV | head
 [ -z "$GSP_PATH" ] && err "No GSP firmware found" && exit 1
 ok "GSP: $GSP_PATH"
 
-info "Step 5/6: Installing to ${INSTALL_DIR}"
+info "Step 4/6: Installing to ${INSTALL_DIR}"
 rm -rf "${INSTALL_DIR}"
 cp -r "${SCRIPT_DIR}" "${INSTALL_DIR}"
 ok "Installed"
 
-info "Step 6/6: Enabling systemd service and rebooting"
+info "Step 5/6: Running unlock"
+TARGET="${CMPUNLOCKER_TARGET:-unlocked_80gb}"
+python3 "${INSTALL_DIR}/cmpunlocker/payload/pipeline.py" \
+    "${PCI_FULL}" "${GSP_PATH}" "${TARGET}"
+ok "Unlock applied"
+
+info "Step 6/6: Enabling systemd service"
 cp "${INSTALL_DIR}/cmpunlocker/daemon/cmpunlocker.service" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable cmpunlocker
-ok "Service enabled (will run on next boot)"
+systemctl start cmpunlocker
+ok "Service enabled"
 
 echo
 echo -e "${CYAN}╔════════════════════════════════════════╗${NC}"
 echo -e "${CYAN}║${NC}   ${GREEN}✓ cmpunlocker installed${CYAN}             ║${NC}"
 echo -e "${CYAN}╚════════════════════════════════════════╝${NC}"
 echo
-echo "System will reboot in 10 seconds..."
-echo "On next boot, the daemon will apply the unlock automatically."
+echo "Verify: nvidia-smi --query-gpu=clocks.max.sm,memory.total --format=csv,noheader"
+echo "Daemon: journalctl -u cmpunlocker -f"
 echo
-echo "Verify after reboot:"
-echo "  nvidia-smi --query-gpu=clocks.max.sm,memory.total --format=csv,noheader"
-echo "  journalctl -u cmpunlocker -f"
-echo
-sleep 10
-systemctl reboot
+echo "Optional: Enable PCIe Gen 4 (if motherboard supports it):"
+echo "  sudo ${INSTALL_DIR}/cmpunlocker/scripts/pcie_gen4_unlock.sh"
+echo "  sudo ${INSTALL_DIR}/cmpunlocker/scripts/pcie_gen4_unlock_bar0.py"
+echo ""
+echo "Optional: Enable PCIe Gen 2 (fallback if Gen 4 unavailable):"
+echo "  Feature is pre-configured in unlock — no additional steps needed"
