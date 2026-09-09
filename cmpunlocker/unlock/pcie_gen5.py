@@ -29,59 +29,53 @@ log = logging.getLogger(__name__)
 def unlock_pcie_gen5(pci_full: str) -> bool:
     """
     Unlock PCIe Gen 5 x8 capability.
-    
+
     Must be called WHILE PLM IS OPEN (during ROP exploit execution).
-    Writes PCIe configuration registers that control Gen capability.
-    
+    Writes PCIe XVE configuration register that controls Gen capability.
+
+    Target register: 0x88ff4 (XVE) - observed in kernel logs as PLM[4]
+
     Returns:
         True if Gen 5 writes succeeded and stuck, False otherwise.
     """
     log.info("[%s] === PCIe Gen 5 Unlock (x8) ===", pci_full)
-    
+
     try:
         with Bar0(pci_full) as bar0:
-            # PTOP_GEN4_CTRL register - try to set Gen 5
-            # This is a control register that may allow setting target PCIe Gen
-            ptop_gen4_ctrl_addr = 0x88c1c
-            
-            # Attempt 1: Write 0x05 for Gen 5
-            log.info("[%s] Writing PTOP_GEN4_CTRL (0x%06x) = 0x00000005 (Gen 5)", 
-                     pci_full, ptop_gen4_ctrl_addr)
-            bar0.wr32(ptop_gen4_ctrl_addr, 0x00000005)
-            val = bar0.rd32(ptop_gen4_ctrl_addr)
-            log.info("[%s] PTOP_GEN4_CTRL read back: 0x%08x", pci_full, val)
-            
-            if (val & 0xf) == 0x05:
-                log.info("[%s] ✓ Gen 5 write stuck!", pci_full)
-                return True
-            else:
-                log.warning("[%s] Gen 5 write did not stick (got 0x%08x)", pci_full, val)
-            
-            # Attempt 2: Try alternative register addresses
-            # NV_XVE_LINK_CONTROL_STATUS at 0x000088 (via BAR0 offset)
-            xve_link_ctrl_addr = 0x000088
-            log.info("[%s] Trying XVE_LINK_CONTROL_STATUS (0x%06x)", 
-                     pci_full, xve_link_ctrl_addr)
-            
-            current = bar0.rd32(xve_link_ctrl_addr)
+            # XVE register at 0x88ff4 - this is the register the firmware
+            # actually tries to open during initialization (from kernel logs)
+            xve_addr = 0x88ff4
+
+            log.info("[%s] Writing XVE (0x%06x) with Gen 5 capability",
+                     pci_full, xve_addr)
+
+            # Read current value first
+            current = bar0.rd32(xve_addr)
             log.info("[%s] XVE current: 0x%08x", pci_full, current)
-            
-            # Write Gen 5 to bits[3:0]
-            new_val = (current & ~0xf) | 0x05
-            bar0.wr32(xve_link_ctrl_addr, new_val)
-            check = bar0.rd32(xve_link_ctrl_addr)
-            log.info("[%s] After write: 0x%08x", pci_full, check)
-            
-            if (check & 0xf) == 0x05:
-                log.info("[%s] ✓ XVE Gen 5 write stuck!", pci_full)
+
+            # Write Gen 5 (0x5) to the speed bits
+            # Try writing 0x05 directly first
+            bar0.wr32(xve_addr, 0x00000005)
+            val = bar0.rd32(xve_addr)
+            log.info("[%s] XVE after write: 0x%08x", pci_full, val)
+
+            if (val & 0xf) == 0x05:
+                log.info("[%s] ✓ Gen 5 enabled on XVE register!", pci_full)
                 return True
-            
-            log.warning("[%s] PCIe Gen 5 unlock attempted but register writes did not stick", 
-                        pci_full)
-            log.info("[%s] Note: Gen 5 may still be available if GPU firmware supports it", 
-                     pci_full)
+
+            # Try alternative: merge Gen 5 with current value
+            new_val = (current & ~0xf) | 0x05
+            bar0.wr32(xve_addr, new_val)
+            check = bar0.rd32(xve_addr)
+            log.info("[%s] XVE after merge: 0x%08x", pci_full, check)
+
+            if (check & 0xf) == 0x05:
+                log.info("[%s] ✓ Gen 5 enabled (merged with current)", pci_full)
+                return True
+
+            log.warning("[%s] Gen 5 write did not stick on XVE register", pci_full)
             return False
-            
+
     except Exception as e:
         log.error("[%s] PCIe Gen 5 unlock failed: %s", pci_full, e)
         return False

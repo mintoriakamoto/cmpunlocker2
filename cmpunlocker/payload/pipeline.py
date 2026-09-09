@@ -191,12 +191,16 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
         log.error("[%s] Not all PLM registers opened, aborting", pci_full)
         return False
 
-    # PCIe Gen 5 unlock (DISABLED - causes Booter crash during firmware init)
-    # The Gen 5 register writes (0x88c1c, 0x000088) break GSP firmware's Booter code.
-    # Error 0x5 occurs on every boot after the writes. Gen 5 code is preserved for
-    # future investigation but disabled to preserve 40GB/1410MHz unlock functionality.
-    log.info("[%s] PCIe Gen 5 unlock disabled (Booter crash on register write)", pci_full)
-    pcie_gen5_ok = False
+    # PCIe Gen 5 unlock (while PLM is open)
+    # Updated to use correct register: XVE at 0x88ff4 (from kernel logs PLM[4])
+    # Previous attempts wrote to wrong registers (0x88c1c, 0x000088) causing Booter crash.
+    log.info("[%s] Attempting PCIe Gen 5 x8 unlock", pci_full)
+    from unlock.pcie_gen5 import unlock_pcie_gen5
+    pcie_gen5_ok = unlock_pcie_gen5(pci_full)
+    if pcie_gen5_ok:
+        log.info("[%s] ✓ PCIe Gen 5 enabled", pci_full)
+    else:
+        log.warning("[%s] PCIe Gen 5 unlock did not stick, continuing with Gen 2", pci_full)
 
     targets = get('memory_unlock.targets')
     mem = targets[target]
