@@ -2,12 +2,12 @@
 pipeline.py — Run the full unlock sequence.
 
 Mirrors the open-gpu-kernel-modules-610.43.03 fork's SEC2 post-bootloader
-timing unlock exactly:
+timing unlock exactly, extended to 8 PLM registers:
 
   1. Stop display manager, unload nvidia modules
   2. Find GSP firmware and the stock signature section
   3. Save the stock signature for later restore
-  4. For each of 4 PLM registers (WPR_CFG, FBPA, WPR, FEAT):
+  4. For each of 8 PLM registers (WPR_CFG, FBPA, WPR, FEAT, XVE, XVE_B, XVE_C, FEAT2):
      a. Refill the ROP payload with the target address/value
      b. Patch the GSP firmware .fwsignature_ga100 section
      c. modprobe nvidia → triggers kgspBootGspRm → kgspExecuteBooterLoad

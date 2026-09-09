@@ -13,7 +13,7 @@ fork that successfully unlocks the CMP 170HX:
 
 2. build(target)
    Build a complete multi-write ROP chain that performs:
-     a) Open 4 PLM registers (WPR_CFG, FBPA, WPR, FEAT)
+     a) Open 8 PLM registers (WPR_CFG, FBPA, WPR, FEAT, XVE, XVE_B, XVE_C, FEAT2)
      b) Write CFG1 (HBM geometry) and LMR (memory rank)
      c) Return cleanly
 
@@ -83,12 +83,12 @@ def fill_payload(write_addr: int, write_value: int) -> bytes:
 def build(target: str = None) -> bytes:
     """Build the full multi-write ROP payload.
 
-    Sequence (run 4 times in modified driver, one per PLM register, then
+    Sequence (run 8 times in modified driver, one per PLM register, then
     a final run for CFG1+LMR):
 
-        1. fill_payload(PLM_ADDR[i], PLM_VALUE[i]) for each i in 0..3
+        1. fill_payload(PLM_ADDR[i], PLM_VALUE[i]) for each i in 0..7
         2. Trigger kgspExecuteBooterLoad → opens the PLM register
-        3. After all 4 PLMs are open, write CFG1 (memory geometry)
+        3. After all 8 PLMs are open, write CFG1 (memory geometry)
         4. After CFG1, write LMR (memory rank)
         5. After LMR, write SS0/SS1 (compute unlock)
         6. Restore original GSP signature
@@ -109,7 +109,7 @@ def build(target: str = None) -> bytes:
     lmr  = targets[target]['lmr']
     feat_ovr = get('host_bar0_writes.feat_ovr_plm.value')
 
-    # The full pipeline runs fill_payload four times (one per PLM table
+    # The full pipeline runs fill_payload eight times (one per PLM table
     # entry) and then twice more (CFG1, LMR). The build() function
     # returns a payload for the FIRST PLM entry (WPR_CFG) — subsequent
     # entries use refill_payload().
