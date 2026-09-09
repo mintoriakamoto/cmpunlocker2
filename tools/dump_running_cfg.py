@@ -197,10 +197,9 @@ def main(argv=None):
             f'no registers read successfully out of {len(addrs)} attempts '
             f'(BAR0 region probably not mapped for userspace access).\n')
         if fail_first is not None:
+            extra = f"  (one of {fail_count} consecutive failures) " if fail_count > 1 else ""
             sys.stderr.write(
-                f'  first failure at offset 0x{fail_first:x}'
-                f'{"  (one of " + str(fail_count) + " consecutive failures) "
-                 if fail_count > 1 else ""}\n')
+                f'  first failure at offset 0x{fail_first:x}{extra}\n')
         sys.stderr.write(
             '  → see the "/sys PCI passthrough" note below\n')
         return 1
