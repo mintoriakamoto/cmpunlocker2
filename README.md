@@ -1,12 +1,13 @@
-# cmpunlocker — CMP 170HX Full Unlock
+# cmpunlocker — CMP 170HX GPU Unlock
 
-**Unlock full GA100 compute and memory on NVIDIA CMP mining cards. Restore 80GB (or 64GB on 8GB variants) and PCIe Gen 5 x16 (128 GB/s).**
+**Unlock GA100 compute and memory on NVIDIA CMP 170HX mining cards via Falcon BootROM ROP exploit.**
+
+**Achieves:** 40GB memory (10GB models) + 1410 MHz compute + Gen 2 x16 PCIe (stable, persistent)
 
 Targets **nvidia-open driver 580.x–610.x** on Linux x86-64.
 
 ```bash
-sudo ./install.sh                              # 80GB + daemon (persistent)
-sudo ./cmpunlocker/scripts/pcie_gen4_unlock.sh # Gen 2-5 x16 (auto-detect)
+sudo python3 cmpunlocker/payload/pipeline.py 0000:01:00.0  # Apply unlock (40GB + 1410MHz)
 ```
 
 > **AI agents:** before making any changes, read `.ai/CONTEXT.md` for essential context and rules.
