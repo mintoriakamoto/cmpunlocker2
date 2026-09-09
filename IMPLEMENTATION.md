@@ -3,12 +3,13 @@
 ## Executive Summary
 
 Full unlock implementation for NVIDIA CMP 170HX (GA100) mining cards enabling:
-- **Memory**: 80GB full capacity (5 × 16GB HBM2e stacks, 8GB variant: 64GB)
+- **Memory**: 40GB tested maximum (5 × 8GB, firmware-protected; 8GB variant: 32GB)
 - **Compute**: Full SM throughput (SS0/SS1 clock unlock)
 - **PCIe**: Gen 2–5 x16 (128 GB/s on Gen 5, auto-detects motherboard capability)
 - **Persistence**: Systemd daemon reapplies unlock after reboot/driver reload
 - **Multi-Hardware**: GA100 (170HX), GH100 (90HX, 50HX)
 - **Driver Support**: 580.x, 590–595.x, 610.x (universal, no driver-specific config)
+- **Limitation**: Firmware-level state validation on CFG1/LMR blocks 80GB+ configuration even with all PLM open
 
 ---
 
@@ -59,7 +60,7 @@ Each requires refilling the ROP payload and triggering BootROM load.
 
 ---
 
-## Part 2: Memory Unlock (80GB)
+## Part 2: Memory Unlock (40GB Maximum — Firmware-Protected)
 
 ### Hardware Architecture
 
@@ -98,14 +99,16 @@ Bit layout:
 
 ### Memory Configuration Hierarchy
 
-| Config | Strap | Feature | Per Stack | Total | CFG1 Value | Use Case |
-|--------|-------|---------|-----------|-------|-----------|----------|
-| nativ_8gb | 0x44 | 0x00 | 2GB | 8GB | 0x02440000 | Factory 8GB |
-| unlocked_32gb | 0x66 | 0x00 | 8GB | 32GB | 0x02660000 | Safe unlock 8GB model |
-| **unlocked_64gb** | **0x77** | **0x00** | **16GB** | **64GB** | **0x02770000** | **Full 8GB model** |
-| nativ_10gb | 0x44 | 0x90 | 2GB | 10GB | 0x02449000 | Factory 10GB |
-| unlocked_40gb | 0x66 | 0x90 | 8GB | 40GB | 0x02669000 | Safe unlock 10GB model |
-| **unlocked_80gb** | **0x77** | **0x90** | **16GB** | **80GB** | **0x02779000** | **Full 10GB model** |
+| Config | Strap | Feature | Per Stack | Total | CFG1 Value | Status |
+|--------|-------|---------|-----------|-------|-----------|--------|
+| nativ_8gb | 0x44 | 0x00 | 2GB | 8GB | 0x02440000 | ✅ Works |
+| unlocked_32gb | 0x66 | 0x00 | 8GB | 32GB | 0x02660000 | ✅ Tested stable |
+| unlocked_64gb | 0x77 | 0x00 | 16GB | 64GB | 0x02770000 | ❌ Firmware-rejected |
+| nativ_10gb | 0x44 | 0x90 | 2GB | 10GB | 0x02449000 | ✅ Works |
+| **unlocked_40gb** | **0x66** | **0x90** | **8GB** | **40GB** | **0x02669000** | **✅ Tested stable** |
+| unlocked_80gb | 0x77 | 0x90 | 16GB | 80GB | 0x02779000 | ❌ Firmware-rejected |
+
+**Firmware Protection:** All attempts to write CFG1 values beyond 40GB (10GB model) or 32GB (8GB model) are rejected by firmware-level state validation. The firmware performs a state-machine check on CFG1 writes that verifies the target value against an internal limit. Even with all 8 PLM registers open, the firmware refuses to accept higher values. This is a designed constraint, not a software limitation.
 
 ### LMR Register (0x00100CE0)
 
