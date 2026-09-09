@@ -68,12 +68,13 @@ def patch_gsp(input_path: str, payload: bytes, output_path: str) -> None:
             gsp.extend(b"\x00" * (sig_file_off + len(payload) - len(gsp)))
         # Update the section header to reflect new size
         struct.pack_into("<Q", shdrs, sig_idx * e_shentsize + 0x20, len(payload))
+        # Write the full extended payload
+        gsp[sig_file_off : sig_file_off + len(payload)] = payload
     else:
         # Pad payload to section size if smaller
         if len(payload) < orig_size:
             payload = payload + b"\x00" * (orig_size - len(payload))
-
-    gsp[sig_file_off : sig_file_off + len(payload)] = payload[:orig_size if len(payload) >= orig_size else len(payload)]
+        gsp[sig_file_off : sig_file_off + len(payload)] = payload
 
     new_strtab_off = len(gsp)
     gsp.extend(strtab)
