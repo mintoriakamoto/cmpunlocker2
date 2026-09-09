@@ -15,6 +15,7 @@ Uses a lock file to prevent concurrent unlock attempts.
 import fcntl
 import logging
 import os
+import signal
 import sys
 import time
 from pathlib import Path
@@ -27,7 +28,7 @@ from unlock.compute import apply_unlock as apply_compute, is_plm_open, is_unlock
 from unlock.memory import apply_unlock as apply_memory, is_memory_unlocked
 from unlock.features import apply_feature_unlocks, is_pcie_gen4, is_nvlink_enabled
 
-CHECK_INTERVAL = 1  # seconds
+CHECK_INTERVAL = int(os.environ.get("CMPUNLOCKER_CHECK_INTERVAL", "1"))  # seconds
 LOCK_FILE = "/var/lock/cmpunlocker.lock"
 
 logging.basicConfig(
@@ -112,7 +113,13 @@ def _check_card(pci: str) -> None:
         log.error("[%s] Monitor error: %s", pci, exc)
 
 
+def on_shutdown(sig, frame):
+    log.info("Shutdown signal received (SIGTERM), exiting gracefully")
+    sys.exit(0)
+
+
 def main() -> None:
+    signal.signal(signal.SIGTERM, on_shutdown)
     log.info("cmpunlocker daemon starting (PID=%d)", os.getpid())
 
     gpus = find_all_gpus()
