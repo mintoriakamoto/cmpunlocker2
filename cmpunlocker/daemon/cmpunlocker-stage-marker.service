@@ -1,0 +1,13 @@
+[Unit]
+Description=cmpunlocker Stage 1 Marker (after gen2.service)
+After=gen2.service
+Before=multi-user.target graphical.target
+ConditionPathExists=/opt/cmpunlocker/cmpunlocker/payload/staged_unlock.py
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -c "import os,sys; sys.path.insert(0,'/opt/cmpunlocker'); from cmpunlocker.payload.staged_unlock import _write_stage; from cmpunlocker.payload.gpu import find_all_gpus; [_write_stage(pci, 1) for pci in find_all_gpus()]"
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
