@@ -28,7 +28,8 @@ def flr_reset(pci_full: str) -> None:
     # Ensure BDF has domain prefix (0000:xx:xx.x format)
     if ":" not in pci_full:
         raise ValueError(f"Invalid PCI BDF format: {pci_full}")
-    if pci_full.count(":") == 2:
+    # If only 2 colons (xx:xx.x), add 0000 domain prefix
+    if pci_full.count(":") == 1:
         pci_full = f"0000:{pci_full}"
     reset_path = f"/sys/bus/pci/devices/{pci_full}/reset"
     with open(reset_path, "w", encoding="utf-8") as f:

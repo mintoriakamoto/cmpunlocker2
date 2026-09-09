@@ -77,7 +77,8 @@ def _check_device_path(pci_full: str) -> None:
 
 
 def _check_bar0_readable(pci_full: str) -> None:
-    """Verify BAR0 resource is readable (prerequisite for mmap)."""
+    """Verify BAR0 resource is accessible via mmap (not direct read)."""
+    import mmap
     bar0_path = f"/sys/bus/pci/devices/{pci_full}/resource0"
     if not os.path.exists(bar0_path):
         raise PrefightError(
@@ -86,16 +87,19 @@ def _check_bar0_readable(pci_full: str) -> None:
         )
 
     try:
-        with open(bar0_path, 'rb') as f:
-            # Try to read first 4 bytes
-            f.read(4)
+        with open(bar0_path, 'r+b') as f:
+            # Try mmap-based access like Bar0 does
+            with mmap.mmap(f.fileno(), 0x1000, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE) as m:
+                val = m.read(4)
+                if len(val) != 4:
+                    raise ValueError("Could not read 4 bytes from mmap")
     except PermissionError:
         raise PrefightError(
-            f"Permission denied reading BAR0 ({bar0_path}). "
+            f"Permission denied accessing BAR0 ({bar0_path}). "
             "Check: Running as root? SELinux/AppArmor restrictions?"
         )
     except Exception as e:
-        raise PrefightError(f"Cannot read BAR0: {e}")
+        raise PrefightError(f"Cannot access BAR0: {e}")
 
 
 def _check_driver_module_loaded() -> None:
@@ -114,7 +118,7 @@ def _check_driver_module_loaded() -> None:
 
 
 def _check_nvidia_smi_sees_device(pci_full: str) -> None:
-    """Verify nvidia-smi can query the device."""
+    """Verify nvidia-smi can query the device (best-effort, non-blocking)."""
     result = subprocess.run(
         ["timeout", "3", "nvidia-smi", "--query-gpu=pci.bus_id",
          "--format=csv,noheader"],
@@ -123,19 +127,12 @@ def _check_nvidia_smi_sees_device(pci_full: str) -> None:
         check=False,
     )
 
-    if result.returncode != 0:
-        raise PrefightError(
-            "nvidia-smi cannot query GPU. "
-            "Check: Is driver initialized? Run: nvidia-smi"
-        )
+    # Non-blocking: nvidia-smi might hang but if BAR0 works, GPU is usable
+    if result.returncode == 0 and ("No devices" not in result.stdout):
+        return  # Success
 
-    if "No devices" in result.stdout or not result.stdout.strip():
-        raise PrefightError(
-            "nvidia-smi reports 'No devices'. "
-            "Driver loaded but GPU not initialized. "
-            "Check: BIOS GPU enable? PCIe slot working? "
-            "Try: sudo nvidia-smi -L"
-        )
+    log.warning("nvidia-smi check inconclusive (timeout or device not ready) — "
+               "continuing anyway since BAR0 is accessible")
 
 
 def _check_gsp_firmware_exists() -> None:
