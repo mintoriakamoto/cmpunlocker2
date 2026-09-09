@@ -107,8 +107,6 @@ def bar0_to_falcon_vaddr(bar0_addr):
     """Inverse of ``vaddr_to_bar0`` for addresses in the Falcon BAR0 window."""
     if FALCON_BAR0_POFFSET <= bar0_addr < FALCON_BAR0_POFFSET + FALCON_BAR0_WIN_SIZE:
         return FALCON_BAR0_WIN_BASE + (bar0_addr - FALCON_BAR0_POFFSET)
-    if GSP_RM_PASSTHROUGH and bar0_addr < 0x1000000:
-        return bar0_addr
     return None
 
 
@@ -525,14 +523,12 @@ class FalconBooter:
             if funct3 == 0:    # ADDI
                 self.regs[rd] = (v1 + imm) & 0xFFFFFFFFFFFFFFFF
             elif funct3 == 1:  # SLLI
-                # RV32 uses 5-bit shamt, RV64 uses 6-bit
-                shamt = (insn >> 20) & 0x1f
-                result32 = (v1 & 0xFFFFFFFF) << shamt
-                # Mask to 32 bits, then sign-extend
-                result32 &= 0xFFFFFFFF
-                if result32 & 0x80000000:
-                    result32 |= 0xFFFFFFFF00000000
-                self.regs[rd] = result32
+                # RV64 uses 6-bit shamt (RV32 would use 5-bit, but we're 64-bit)
+                shamt = (insn >> 20) & 0x3f
+                if shamt < 64:
+                    self.regs[rd] = (v1 << shamt) & 0xFFFFFFFFFFFFFFFF
+                else:
+                    self.regs[rd] = 0
             elif funct3 == 2:  # SLTI
                 # Sign-extend both operands to 64-bit for signed comparison
                 self.regs[rd] = 1 if self._sxt(v1 & 0xFFFFFFFF, 32) < self._sxt(imm & 0xFFFFFFFF, 32) else 0
