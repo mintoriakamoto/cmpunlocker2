@@ -31,16 +31,50 @@ ok "Environment OK"
 info "Step 2/6: Detecting GPU"
 # Support for CMP 170HX (GA100), 90HX (GH100), 50HX (GH100)
 # From ecosystem research: pearlfortune extends hardware support
-PCI=$(lspci -nn 2>/dev/null | grep -iE "10de:(20b0|20c2|2082|220d|2209)" | head -1 | awk '{print $1}')
-if [ -z "$PCI" ]; then
-    err "No CMP card found"
-    echo "  Supported: CMP 170HX (10de:20b0/20c2/2082)"
-    echo "  Supported: CMP 90HX (10de:220d)"
-    echo "  Supported: CMP 50HX (10de:2209)"
-    exit 1
+
+# Try environment variable override first
+if [ -n "${CMPUNLOCKER_PCI:-}" ]; then
+    PCI_FULL="$CMPUNLOCKER_PCI"
+    info "Using PCI from CMPUNLOCKER_PCI: $PCI_FULL"
+else
+    PCI=""
+    # Try lspci first
+    if command -v lspci &>/dev/null; then
+        PCI=$(lspci -nn 2>/dev/null | grep -iE "10de:(20b0|20c2|2082|220d|2209)" | head -1 | awk '{print $1}')
+    fi
+    # Fall back to sysfs search
+    if [ -z "$PCI" ]; then
+        for dev in /sys/bus/pci/devices/*/; do
+            vendor=$(cat "$dev/vendor" 2>/dev/null)
+            device=$(cat "$dev/device" 2>/dev/null)
+            if [ "$vendor" = "0x10de" ] && [ "$device" = "0x2082" ]; then
+                PCI=$(basename "$dev")
+                break
+            fi
+        done
+    fi
+    if [ -z "$PCI" ]; then
+        err "No CMP card found via lspci or sysfs"
+        echo "  Supported: CMP 170HX (10de:20b0/20c2/2082)"
+        echo "  Supported: CMP 90HX (10de:220d)"
+        echo "  Supported: CMP 50HX (10de:2209)"
+        echo ""
+        echo "  Manual override: export CMPUNLOCKER_PCI=0000:XX:YY.Z"
+        exit 1
+    fi
+    PCI_FULL="0000:${PCI}"
+    # Remove domain prefix if already present (01:00.0 -> 01:00.0, 0000:01:00.0 -> 01:00.0)
+    PCI_FULL=$(echo "$PCI_FULL" | sed 's/^0000://')
+    PCI_FULL="0000:${PCI_FULL}"
 fi
-PCI_FULL="0000:${PCI}"
-GPU_ID=$(echo "$PCI" | grep -oE "10de:[0-9a-f]+" | cut -d: -f2)
+
+# Extract device ID from sysfs
+if [ -f "/sys/bus/pci/devices/$PCI_FULL/device" ]; then
+    DEVICE_HEX=$(cat "/sys/bus/pci/devices/$PCI_FULL/device" 2>/dev/null)
+    GPU_ID=$(echo "$DEVICE_HEX" | sed 's/^0x//')
+else
+    GPU_ID="unknown"
+fi
 case "$GPU_ID" in
   20b0|20c2|2082) GPU_NAME="CMP 170HX (GA100)" ;;
   220d) GPU_NAME="CMP 90HX (GH100)" ;;
