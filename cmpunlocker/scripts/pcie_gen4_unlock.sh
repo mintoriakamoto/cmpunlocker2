@@ -63,8 +63,9 @@ fi
 info "GPU BDF: $BDF"
 
 # Verify it's the right card
-VENDOR=$(lspci -nns "$BDF" 2>/dev/null | awk -F': ' '{print $2}' | cut -d' ' -f1)
-DEVICE=$(lspci -nns "$BDF" 2>/dev/null | awk -F': ' '{print $2}' | cut -d' ' -f2)
+ID_PAIR=$(lspci -nns "$BDF" 2>/dev/null | grep -oE '\[[0-9a-f:]+\]' | tr -d '[]')
+VENDOR=$(echo "$ID_PAIR" | cut -d: -f1)
+DEVICE=$(echo "$ID_PAIR" | cut -d: -f2)
 info "Vendor:Device = $VENDOR:$DEVICE"
 
 # Constants from GA100 XVE register space
@@ -116,7 +117,7 @@ info "  RO enabled: ${RO_ENABLED}"
 # === Step 2: Check root complex ===
 RC_MAX=$(lspci -nns 00:00.0 2>/dev/null | head -1)
 info "Root complex: $RC_MAX"
-RC_SPEED=$(lspci -s 00:00.0 -vv 2>/dev/null | grep "Speed" | head -1 | awk '{print $2}')
+RC_SPEED=$(lspci -s 00:00.0 -vv 2>/dev/null | grep -oE '[0-9]+\.[0-9]+GT/s' | head -1)
 
 # Determine target speed (supports Gen 1-5 via XVE register)
 case "$RC_SPEED" in

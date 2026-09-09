@@ -1,28 +1,24 @@
 """
-staged_unlock.py — D3DX9-pattern staged unlock with verification between stages.
+staged_unlock.py — D3DX9-pattern 2-stage staged unlock with daemon auto-continuation.
 
-The unlock happens in 3 stages with mandatory reboots:
+The unlock happens in 2 stages:
 
-STAGE 1: PCIe Gen 2 Only (Lowest Risk)
+STAGE 1: PCIe Gen 2 Only (Manual, Lowest Risk)
   - Write Gen 2 target to BAR0 (doesn't require PLM open)
   - Verify BAR0 write succeeds
-  - Reboot required (user verifies Gen 2 shows in lspci)
+  - Full power-off required (user verifies Gen 2 shows in lspci)
   - Purpose: Test BAR0 access before attempting exploit
 
-STAGE 2: PLM Opening + Core Unlocks (Medium Risk)
+STAGE 2: PLM Opening + Core + Feature Unlocks (Automatic via Daemon)
   - Execute ROP exploit to open all 4 PLM registers
-  - Write memory unlock (CFG1/LMR)
-  - Write compute unlock (SS0/SS1)
-  - Reboot required (user verifies 80GB + clock in nvidia-smi)
-  - Purpose: Unlock full memory and compute
+  - Write memory unlock (CFG1/LMR) for 80GB
+  - Write compute unlock (SS0/SS1) for 1410+ MHz
+  - Apply all feature unlocks (PCIe Gen 3-5, NVLink, ECC, ARC)
+  - Daemon auto-runs this stage after Stage 1 reboot
+  - Purpose: Full unlock with all features
 
-STAGE 3: Feature Unlocks (Low Risk)
-  - Apply Gen 3-5 target speeds
-  - Apply NVLink, ECC, ARC, etc.
-  - Run pcie_gen4_unlock.sh for link retraining
-  - Purpose: Maximize performance
-
-Each stage can be resumed independently if interrupted.
+Stage 1 is manual (user runs install.sh --stage=1).
+Stage 2 is automatic (daemon detects stage 1 complete and runs it).
 """
 
 import logging
@@ -143,30 +139,8 @@ def stage2_plm_core_unlock(pci_full: str, gsp_path: str = None, target: str = No
         return False
 
 
-def stage3_feature_unlocks(pci_full: str) -> bool:
-    """Stage 3: Optional feature unlocks (Gen 3-5, NVLink, ECC, etc).
-
-    After Stage 2 reboot, apply remaining feature unlocks.
-    Best-effort - failures don't block.
-    """
-    log.info("[%s] === STAGE 3: Feature Unlocks ===", pci_full)
-
-    from unlock.features import apply_feature_unlocks
-
-    try:
-        results = apply_feature_unlocks(pci_full)
-        log.info("[%s] Feature unlocks applied: %s", pci_full, results)
-        log.info("[%s] === STAGE 3 COMPLETE ===", pci_full)
-        log.info("[%s] Optional: Run pcie_gen4_unlock.sh for link retraining", pci_full)
-        _write_stage(pci_full, 3)
-        return True
-    except Exception as e:
-        log.error("Feature unlocks failed: %s", e)
-        return False
-
-
 def get_current_stage(pci_full: str) -> int:
-    """Get current unlock stage (0-3)."""
+    """Get current unlock stage (0-2)."""
     return _read_stage(pci_full)
 
 
@@ -176,7 +150,7 @@ def is_stage_complete(pci_full: str, stage: int) -> bool:
 
 
 def run_next_stage(pci_full: str, gsp_path: str = None, target: str = None) -> bool:
-    """Run the next incomplete stage."""
+    """Run the next incomplete stage (1 or 2)."""
     current = _read_stage(pci_full)
 
     if current == 0:
@@ -185,9 +159,6 @@ def run_next_stage(pci_full: str, gsp_path: str = None, target: str = None) -> b
     elif current == 1:
         log.info("Resuming from Stage 2")
         return stage2_plm_core_unlock(pci_full, gsp_path, target)
-    elif current == 2:
-        log.info("Resuming from Stage 3")
-        return stage3_feature_unlocks(pci_full)
     else:
         log.info("All stages complete (stage=%d)", current)
         return True
