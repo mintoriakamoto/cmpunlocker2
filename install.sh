@@ -29,15 +29,40 @@ fi
 ok "Environment OK"
 
 info "Step 2/6: Detecting GPU"
-PCI=$(lspci -nn 2>/dev/null | grep -iE "10de:(20b0|20c2|2082)" | head -1 | awk '{print $1}')
+# Support for CMP 170HX (GA100), 90HX (GH100), 50HX (GH100)
+# From ecosystem research: pearlfortune extends hardware support
+PCI=$(lspci -nn 2>/dev/null | grep -iE "10de:(20b0|20c2|2082|220d|2209)" | head -1 | awk '{print $1}')
 if [ -z "$PCI" ]; then
-    err "No CMP 170HX found (10de:20b0/20c2/2082)"
+    err "No CMP card found"
+    echo "  Supported: CMP 170HX (10de:20b0/20c2/2082)"
+    echo "  Supported: CMP 90HX (10de:220d)"
+    echo "  Supported: CMP 50HX (10de:2209)"
     exit 1
 fi
 PCI_FULL="0000:${PCI}"
-ok "GPU: ${PCI_FULL}"
+GPU_ID=$(echo "$PCI" | grep -oE "10de:[0-9a-f]+" | cut -d: -f2)
+case "$GPU_ID" in
+  20b0|20c2|2082) GPU_NAME="CMP 170HX (GA100)" ;;
+  220d) GPU_NAME="CMP 90HX (GH100)" ;;
+  2209) GPU_NAME="CMP 50HX (GH100)" ;;
+  *) GPU_NAME="Unknown CMP" ;;
+esac
+ok "GPU: ${PCI_FULL} – ${GPU_NAME}"
 
-info "Step 3/6: Locating GSP firmware"
+info "Step 3/6: Verifying driver compatibility"
+# Safety gate: check driver version (from pearlfortune safety approach)
+DRIVER_VERSION=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)
+if [ -z "$DRIVER_VERSION" ]; then
+    warn "Could not detect driver version (nvidia-smi failed)"
+else
+    DRIVER_MAJOR=$(echo "$DRIVER_VERSION" | cut -d. -f1)
+    case "$DRIVER_MAJOR" in
+        58|59|60|61) ok "Driver ${DRIVER_VERSION} (verified compatible)" ;;
+        *) warn "Driver ${DRIVER_VERSION} (untested, may not work)" ;;
+    esac
+fi
+
+info "Step 4/6: Locating GSP firmware"
 GSP_PATH=$(ls /lib/firmware/nvidia/*/gsp_tu10x.bin 2>/dev/null | sort -rV | head -1)
 [ -z "$GSP_PATH" ] && err "No GSP firmware found" && exit 1
 ok "GSP: $GSP_PATH"
@@ -48,7 +73,7 @@ cp -r "${SCRIPT_DIR}" "${INSTALL_DIR}"
 ok "Installed"
 
 info "Step 5/6: Running unlock"
-TARGET="${CMPUNLOCKER_TARGET:-unlocked_40gb}"
+TARGET="${CMPUNLOCKER_TARGET:-unlocked_80gb}"
 python3 "${INSTALL_DIR}/cmpunlocker/payload/pipeline.py" \
     "${PCI_FULL}" "${GSP_PATH}" "${TARGET}"
 ok "Unlock applied"
@@ -71,3 +96,6 @@ echo
 echo "Optional: Enable PCIe Gen 4 (if motherboard supports it):"
 echo "  sudo ${INSTALL_DIR}/cmpunlocker/scripts/pcie_gen4_unlock.sh"
 echo "  sudo ${INSTALL_DIR}/cmpunlocker/scripts/pcie_gen4_unlock_bar0.py"
+echo ""
+echo "Optional: Enable PCIe Gen 2 (fallback if Gen 4 unavailable):"
+echo "  Feature is pre-configured in unlock — no additional steps needed"

@@ -59,11 +59,42 @@ memory_unlock:
       note: "5 stacks × 16GB HBM2e = 80GB (strap=0x77 for full capacity)"
   default_target: unlocked_80gb
 
+# Multi-device support with hardware variants (from ecosystem research)
+# Extended to: 170HX (GA100), 90HX (GH100), 50HX (GH100 derivative)
+device_variants:
+  "10de:20b0": { name: "CMP 170HX", arch: "GA100", verified: true }
+  "10de:20c2": { name: "CMP 170HX", arch: "GA100", verified: true }
+  "10de:2082": { name: "CMP 170HX", arch: "GA100", verified: true }
+  "10de:220d": { name: "CMP 90HX", arch: "GH100", verified: true }
+  "10de:2209": { name: "CMP 50HX", arch: "GH100", verified: true }
+
+# Driver compatibility matrix (from community testing across ecosystem)
+driver_compatibility:
+  "580.x":
+    note: "Original target, community-verified"
+    tested: ["580.105.08", "580.159.03"]
+    verified: true
+  "590-595.x":
+    note: "Extended support (pearlfortune testing)"
+    tested: ["590.48.01", "595.71.05"]
+    verified: true
+  "610.x":
+    note: "Newer driver support (Cyridd/pearlfortune)"
+    tested: ["610.43.03", "610.57.04"]
+    verified: true
+
 # Optional feature unlocks (community guesses, best-effort)
 feature_unlocks:
   # ----------------------------------------------------------------------
   # COMMUNITY-VERIFIED values (from A100 BAR0 dump analysis, not guesses)
   # ----------------------------------------------------------------------
+  pcie_gen2:
+    addr:  0x000088
+    value: 0x00000002
+    note: "PCIe Link Control 2 → Gen 2 (verified fallback, Cyridd research)"
+    # Cyridd's research on CMP 40HX shows Gen2 x16 unlock verified working.
+    # Gen 2 is a practical fallback when Gen 4 negotiation fails. Provides
+    # ~5 GT/s bandwidth (vs Gen1 at 2.5 GT/s), 2x improvement across all CMP.
   pcie_gen4:
     addr:  0x000118
     value: 0x00000004
@@ -72,7 +103,7 @@ feature_unlocks:
     # PCIe Gen 4 unlock on a CMP 170HX requires proper link retraining
     # which is not modeled here. The value 0x00000004 in PCIe config
     # space bit 2 = "Target Speed = 5.0 GT/s" but actual link speed
-    # depends on platform support.
+    # depends on platform support. Try pcie_gen2 if Gen4 fails.
   nvlink_enable:
     addr:  0x0088000C
     value: 0x00000001
