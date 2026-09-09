@@ -191,6 +191,15 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
         log.error("[%s] Not all PLM registers opened, aborting", pci_full)
         return False
 
+    # PCIe Gen 5 unlock (while PLM is open)
+    log.info("[%s] Attempting PCIe Gen 5 x8 unlock", pci_full)
+    from unlock.pcie_gen5 import unlock_pcie_gen5
+    pcie_gen5_ok = unlock_pcie_gen5(pci_full)
+    if pcie_gen5_ok:
+        log.info("[%s] ✓ PCIe Gen 5 enabled", pci_full)
+    else:
+        log.warning("[%s] PCIe Gen 5 unlock did not stick, continuing with Gen 2", pci_full)
+
     targets = get('memory_unlock.targets')
     mem = targets[target]
 
