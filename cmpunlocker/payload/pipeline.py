@@ -217,20 +217,23 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
     wpr2_hi_ok = _write_bar0(pci_full, get('host_bar0_writes.wpr2_hi.addr'),
                               get('host_bar0_writes.wpr2_hi.value'), 'WPR2_HI')
 
-    # Two-phase CFG1 write: first unlock value, then target value
-    # (similar to how PLM registers need specific unlock values)
+    # FBPA and CFG1 are in same address block and need synchronized values
+    # FBPA @ 0x009A0148 (same block as CFG1 @ 0x009A0204)
     cfg1_addr = get('memory_unlock.cfg1.addr')
+    fbpa_addr = 0x009A0148  # FBPA - paired with CFG1 for memory config
     lmr_addr = get('memory_unlock.lmr.addr')
 
-    log.info("[%s] Writing memory unlock: CFG1=0x%08x LMR=0x%08x",
+    log.info("[%s] Writing memory unlock: CFG1=0x%08x LMR=0x%08x (FBPA synchronized)",
              pci_full, mem['cfg1'], mem['lmr'])
 
-    # Phase 1: Write intermediate unlock value (0x02449000 = 10GB native, what hardware expects)
-    log.info("[%s] CFG1 Phase 1: Writing unlock value 0x02449000", pci_full)
+    # Phase 1: Write intermediate unlock values to both FBPA and CFG1
+    log.info("[%s] Memory Phase 1: Writing unlock value 0x02449000 to FBPA and CFG1", pci_full)
+    _write_bar0(pci_full, fbpa_addr, 0x02449000, 'FBPA_UNLOCK')
     _write_bar0(pci_full, cfg1_addr, 0x02449000, 'CFG1_UNLOCK')
 
-    # Phase 2: Write target value
-    log.info("[%s] CFG1 Phase 2: Writing target value 0x%08x", pci_full, mem['cfg1'])
+    # Phase 2: Write target values to both (synchronized)
+    log.info("[%s] Memory Phase 2: Writing target value 0x%08x to FBPA and CFG1", pci_full, mem['cfg1'])
+    _write_bar0(pci_full, fbpa_addr, mem['cfg1'], 'FBPA')
     cfg1_ok = _write_bar0(pci_full, cfg1_addr, mem['cfg1'], 'CFG1')
     lmr_ok  = _write_bar0(pci_full, lmr_addr, mem['lmr'], 'LMR')
 
