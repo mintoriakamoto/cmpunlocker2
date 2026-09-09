@@ -149,6 +149,17 @@ def main() -> None:
 
     log.info("Found %d GPU(s): %s", len(gpus), ", ".join(gpus))
 
+    # Validate BAR0 access before entering monitor loop
+    try:
+        from cmpunlocker.payload.bar0 import Bar0
+        test_pci = gpus[0]
+        with Bar0(test_pci) as bar0:
+            bar0.rd32(0x0)
+        log.info("BAR0 access validated on %s", test_pci)
+    except Exception as e:
+        log.error("BAR0 access validation failed: %s — check permissions and hardware", e)
+        sys.exit(1)
+
     # Run initial unlock for each GPU
     for pci in gpus:
         log.info("[%s] Running initial unlock", pci)
