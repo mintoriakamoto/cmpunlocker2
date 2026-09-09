@@ -218,27 +218,42 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
                               get('host_bar0_writes.wpr2_hi.value'), 'WPR2_HI')
 
     # CRITICAL: Firmware signals the correct LMR value by returning it on read.
-    # We MUST write the firmware-read LMR value FIRST before CFG1 will accept changes.
-    # This is the "unlock sequence": write firmware-signaled LMR → then write CFG1 target.
+    # Must keep BAR0 open for atomic read-write sequence (firmware expects same mmap context).
+    # Sequence: read LMR → write LMR (firmware-signaled) → write CFG1 target.
     cfg1_addr = get('memory_unlock.cfg1.addr')
     lmr_addr = get('memory_unlock.lmr.addr')
 
     from payload.bar0 import Bar0
-    with Bar0(pci_full) as bar0:
-        # Read the firmware-signaled LMR value (this is the UNLOCK value)
-        firmware_lmr = bar0.rd32(lmr_addr)
-        log.info("[%s] Firmware-signaled LMR: 0x%08x (will use this to unlock)", pci_full, firmware_lmr)
 
     log.info("[%s] Writing memory unlock: CFG1=0x%08x LMR=0x%08x",
              pci_full, mem['cfg1'], mem['lmr'])
 
-    # Phase 1: Write firmware-signaled LMR value (this unlocks CFG1)
-    log.info("[%s] Phase 1: Write firmware-signaled LMR=0x%08x (unlock key)", pci_full, firmware_lmr)
-    lmr_ok = _write_bar0(pci_full, lmr_addr, firmware_lmr, 'LMR_UNLOCK')
+    with Bar0(pci_full) as bar0:
+        # Step 1: Read firmware-signaled LMR value (this is the UNLOCK value)
+        firmware_lmr = bar0.rd32(lmr_addr)
+        log.info("[%s] Firmware-signaled LMR: 0x%08x (unlock key)", pci_full, firmware_lmr)
 
-    # Phase 2: Write CFG1 target (now that LMR is correct, CFG1 should accept it)
-    log.info("[%s] Phase 2: Write CFG1 target=0x%08x", pci_full, mem['cfg1'])
-    cfg1_ok = _write_bar0(pci_full, cfg1_addr, mem['cfg1'], 'CFG1')
+        # Step 2: Write firmware-signaled LMR value (unlocks CFG1)
+        log.info("[%s] Writing LMR=0x%08x to unlock CFG1", pci_full, firmware_lmr)
+        bar0.wr32(lmr_addr, firmware_lmr)
+        lmr_check = bar0.rd32(lmr_addr)
+        lmr_ok = lmr_check == firmware_lmr
+        if lmr_ok:
+            log.info("[%s] LMR_UNLOCK = 0x%08x OK", pci_full, lmr_check)
+        else:
+            log.warning("[%s] LMR_UNLOCK failed (wrote 0x%08x, got 0x%08x)",
+                       pci_full, firmware_lmr, lmr_check)
+
+        # Step 3: Write CFG1 target (while BAR0 still open, same mmap context)
+        log.info("[%s] Writing CFG1 target=0x%08x (atomic with LMR)", pci_full, mem['cfg1'])
+        bar0.wr32(cfg1_addr, mem['cfg1'])
+        cfg1_check = bar0.rd32(cfg1_addr)
+        cfg1_ok = cfg1_check == mem['cfg1']
+        if cfg1_ok:
+            log.info("[%s] CFG1 = 0x%08x OK", pci_full, cfg1_check)
+        else:
+            log.warning("[%s] CFG1 write failed (wrote 0x%08x, got 0x%08x)",
+                       pci_full, mem['cfg1'], cfg1_check)
 
     ss0_addr = get('host_bar0_writes.ss0.addr')
     ss0_val  = get('host_bar0_writes.ss0.value')
