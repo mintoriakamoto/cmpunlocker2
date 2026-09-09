@@ -50,18 +50,20 @@ esac
 ok "GPU: ${PCI_FULL} – ${GPU_NAME}"
 
 info "Step 3/6: Verifying driver compatibility"
-# Universal across drivers: 580.x, 590-595.x, 610.x
-# ROP chain sourced from open-gpu-kernel-modules-610.43.03 but works on any version
+# 610.43.03 ONLY for GA100/GH100: contains the only ROP gadget that exploits Falcon BootROM
+# (verified: 610.43.02 fails, gadget doesn't exist in other 610.x versions)
 DRIVER_VERSION=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)
 if [ -z "$DRIVER_VERSION" ]; then
-    warn "Could not detect driver version (nvidia-smi failed)"
-else
-    DRIVER_MAJOR=$(echo "$DRIVER_VERSION" | cut -d. -f1)
-    case "$DRIVER_MAJOR" in
-        58|59|60|61) ok "Driver ${DRIVER_VERSION} (verified compatible)" ;;
-        *) warn "Driver ${DRIVER_VERSION} (untested, may not work)" ;;
-    esac
+    err "Could not detect driver version (nvidia-smi failed)"
+    exit 1
 fi
+if [ "$DRIVER_VERSION" != "610.43.03" ]; then
+    err "Driver ${DRIVER_VERSION} is not supported"
+    echo "  Required: 610.43.03 (only version with working Falcon BootROM ROP gadget)"
+    echo "  Note: 610.43.02 and other 610.x versions fail (gadget doesn't exist)"
+    exit 1
+fi
+ok "Driver ${DRIVER_VERSION} verified"
 
 info "Step 4/6: Locating GSP firmware"
 GSP_PATH=$(ls /lib/firmware/nvidia/*/gsp_tu10x.bin 2>/dev/null | sort -rV | head -1)
