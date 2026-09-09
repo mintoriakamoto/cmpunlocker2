@@ -1,147 +1,130 @@
-# PCIe Gen 5 x8 Unlock Guide
+# CMP 170HX Gen 5 PCIe Unlock - Complete Integration Guide
 
-## Status
-✅ **Gen 5 unlock code integrated** into exploit pipeline  
-✅ **Comprehensive backups created** at `/opt/cmpunlocker-backups/`  
-⏳ **Ready for testing**
+## Overview
+This guide documents the complete process to achieve Gen 5 x16 PCIe speed on CMP 170HX, building on the existing 40GB memory + 1410 MHz compute unlock.
+
+## Current State
+- ✓ Memory: 40GB unlocked and persistent
+- ✓ Compute: 1410 MHz (full SM speed)
+- ✓ PCIe Register: Gen 5 capability register writes persist (BAR0 0x009088)
+- ✗ PCIe Speed: GPU still negotiates Gen 2 x4 (firmware OTP fuse limitation)
+
+## Key Finding: Kernel Driver Patching Approach
+
+**Reference Project**: abobasixseven/unlock-cmp-170hx achieves unlock via **kernel driver patching**, not firmware modification.
+
+### Their Approach: Kernel-Level PLM Opening
+1. Patch nvidia-open driver (610.43.03) directly
+2. Embed PLM register opening in kgspExecuteBooterLoad_HAL
+3. Write register values before GSP-RM firmware boots:
+   - FBPA_CFG1 = 0x02779000 (64GB HBM2e geometry)
+   - MMU_LMR = 0x0000020B (memory limit)
+   - SS0/SS1 = 0x88888888 / 0x00000008 (throttle disables)
+4. Patch GspStaticConfigInfo to report FB_BYTES = 0x1000000000 (64GB)
+5. Cold reboot (60s capacitor discharge) to reset WPR2 state
+
+**Implication**: Their approach doesn't require firmware modification, only driver patching!
+
+### Gen 2 PCIe via Kernel Patching
+- Use register override: CYA_0 bit 2 + OPT_GEN23 setting
+- Requires "userspace retrain hammering during GSP bootstrap window"
+- Achievable without firmware patching
+
+### Hardware Fuse Limitation
+- **Gen 3/Gen 4**: Impossible — hardware fuse FUSE_PCIE_GEN23_DIS blocks software paths
+- **Gen 5**: Unknown — not explicitly discussed in reference project
+
+## Two Paths Forward
+
+### Path A: Kernel Driver Patching (Recommended)
+**Advantage**: Pure driver-level, no firmware modification
+**Challenge**: Requires patching and rebuilding nvidia-open driver 610.43.03
+
+**Steps**:
+1. Download nvidia-open 610.43.03 source
+2. Apply patches from abobasixseven project for PLM opening
+3. Modify to target Gen 5 instead of 64GB if possible
+4. Rebuild and install driver
+5. Cold reboot with capacitor discharge
+
+### Path B: Firmware Patching (Current Approach)
+**Advantage**: Potentially more portable, single-use exploit
+**Challenge**: Requires Falcon ISA reverse engineering and firmware binary patching
+
+**Steps**:
+1. Reverse engineer GSP firmware to find fuse-check code
+2. Patch Falcon ISA instructions to ignore OTP fuse
+3. Apply patched firmware via exploit pipeline
+4. PCI Config Space unlock for Gen 5 negotiation
+
+## Recommended Next Steps
+
+### Immediate (Next 1-2 hours)
+1. ✅ Examine abobasixseven/unlock-cmp-170hx repository in detail
+2. ✅ Understand their kernel patching approach
+3. ✅ Identify if their patches can be adapted for Gen 5
+
+### Short Term (Next 4-8 hours)
+1. Decide: Kernel patching vs firmware patching
+2. If kernel patching: Download, patch, rebuild driver
+3. If firmware patching: Start Falcon ISA reverse engineering
+
+### Testing
+- Current state: 40GB memory + 1410 MHz compute working
+- Min success: Maintain 40GB + 1410 MHz + any PCIe Gen improvement
+- Target: 40GB + 1410 MHz + Gen 5 x16 (32 GT/s)
+
+## Current Implementation Status
+
+### ✅ Completed
+- ROP exploit infrastructure (6/8 PLM registers)
+- BAR0 memory-mapped I/O (40GB CFG1/LMR)
+- Compute unlock (SS0/SS1)
+- PCI Config Space unlock method (ready to deploy)
+- Firmware patching framework (skeleton ready)
+
+### ⏳ In Progress
+- Research into kernel driver patching approach
+- Investigation of abobasixseven reference project
+
+### ❌ Not Yet Started
+- Choose primary approach (kernel vs firmware patching)
+- Implement chosen method
+- Test complete Gen 5 unlock chain
+
+## Files Ready for Integration
+
+```
+cmpunlocker/
+├── payload/
+│   ├── pipeline.py                     ✅ Main pipeline (partially integrated)
+│   ├── firmware_fuse_unlock.py          ✅ Framework ready (awaits implementation)
+│   ├── falcon_analyzer.py               ✅ Pattern analysis tool ready
+│   └── [kernel_patch_integration.py]    ⏳ TODO if kernel approach chosen
+└── unlock/
+    └── pcie_config_unlock.py            ✅ Ready to deploy
+```
+
+## Key Questions to Answer
+
+1. **Can kernel patching achieve Gen 5?** (or only Gen 2?)
+2. **Is hardware fuse the blocker for Gen 5?** (like Gen 3/4)
+3. **Can firmware patching bypass the fuse?** (our assumption)
+4. **What's the easiest path for 32 GT/s bandwidth?**
+
+## Success Criteria
+
+### Minimum (Current Working State)
+- ✅ Memory: 40GB
+- ✅ Compute: 1410 MHz
+- ❌ PCIe: Still Gen 2 x4 (5.0 GT/s)
+
+### Full Success Target
+- ✅ Memory: 40GB (or 80GB if firmware lock cleared)
+- ✅ Compute: 1410 MHz
+- ✅ PCIe: Gen 5 x16 (32 GT/s, 8 GB/s per direction)
 
 ---
 
-## What We're Doing
-
-**Target:** Unlock PCIe Gen 5 x8 (32 GB/s) on your motherboard  
-**Current:** x4 Gen 2 (2.5 GB/s)  
-**Method:** Write PCIe capability registers WHILE PLM IS OPEN (during ROP exploit)
-
-**Why this works:**
-1. ROP exploit opens PLM → full BAR0 access
-2. Gen 5 registers written to GPU via BAR0
-3. Values persist even after firmware restore
-4. GPU firmware init sees Gen 5 enabled, negotiates accordingly
-
----
-
-## Backup Locations
-
-```
-/opt/cmpunlocker-backups/
-├── gsp_tu10x.bin                    (current clean)
-├── gsp_tu10x.bin.cmpunlocker.bak    (factory original)
-├── gsp_tu10x.bin.cmpunlocker.patched (last patched)
-├── cmpunlocker.service              (systemd unit)
-├── cmpunlocker-repo-backup/         (full codebase)
-└── cmpunlocker2-source-backup/      (source repo)
-```
-
-**Recovery:** If Gen 5 test fails:
-```bash
-sudo cp /opt/cmpunlocker-backups/gsp_tu10x.bin.cmpunlocker.bak \
-       /lib/firmware/nvidia/610.43.02/gsp_tu10x.bin
-sudo bash -c 'echo 1 > /sys/bus/pci/devices/0000:01:00.0/reset'
-# GPU will come back online at 40GB/1410MHz (Gen 5 unlock just won't work)
-```
-
----
-
-## How to Test Gen 5 Unlock
-
-### Phase 1: Run Full Exploit with Gen 5
-
-```bash
-# 1. Ensure clean firmware (critical!)
-sudo cp /lib/firmware/nvidia/610.43.02/gsp_tu10x.bin.cmpunlocker.bak \
-       /lib/firmware/nvidia/610.43.02/gsp_tu10x.bin
-
-# 2. Run full unlock pipeline (now includes Gen 5 attempt)
-sudo python3 /opt/cmpunlocker-repo/cmpunlocker/payload/pipeline.py \
-  0000:01:00.0 \
-  /lib/firmware/nvidia/610.43.02/gsp_tu10x.bin \
-  unlocked_80gb
-
-# Watch logs:
-# [0000:01:00.0] Attempting PCIe Gen 5 x8 unlock
-# [0000:01:00.0] Writing PTOP_GEN4_CTRL (0x88c1c) = 0x00000005 (Gen 5)
-# [0000:01:00.0] ✓ Gen 5 write stuck!  ← SUCCESS!
-# OR
-# [0000:01:00.0] Gen 5 write did not stick ← OK, fallback to Gen 2
-```
-
-### Phase 2: Verify Results
-
-```bash
-# Check PCIe speed
-cat /sys/bus/pci/devices/0000:01:00.0/current_link_speed
-# Expected: 32.0 GT/s (Gen 5) or 5.0 GT/s (Gen 2)
-
-# Check memory/compute (should be unchanged)
-nvidia-smi --query-gpu=memory.total,clocks.max.sm --format=csv,noheader
-# Expected: 40960 MiB, 1410 MHz (regardless of PCIe Gen)
-
-# Full GPU check
-nvidia-smi
-```
-
----
-
-## Possible Outcomes
-
-### ✅ Success (Gen 5 x8 Enabled)
-```
-PCIe Speed: 32.0 GT/s ← Gen 5!
-Memory: 40GB ✓
-Compute: 1410 MHz ✓
-Bandwidth: 32 GB/s ✓
-```
-
-### ⚠️ Partial (Gen 2 Falls Back)
-```
-PCIe Speed: 5.0 GT/s (Gen 2)
-Memory: 40GB ✓
-Compute: 1410 MHz ✓
-Reason: Register writes didn't stick (likely read-only hardware)
-Note: Still 2000x better than factory, acceptable for production
-```
-
-### ❌ Recovery (If GPU Goes Offline)
-```bash
-# Restore from backup
-sudo cp /opt/cmpunlocker-backups/gsp_tu10x.bin.cmpunlocker.bak \
-       /lib/firmware/nvidia/610.43.02/gsp_tu10x.bin
-
-# FLR reset
-sudo bash -c 'echo 1 > /sys/bus/pci/devices/0000:01:00.0/reset'
-sleep 2
-
-# GPU comes back with 40GB/1410MHz (no Gen 5, but stable)
-nvidia-smi
-```
-
----
-
-## Key Points
-
-- **Backups are safe:** Comprehensive backups exist at `/opt/cmpunlocker-backups/`
-- **Reversible:** FLR reset + firmware restore = instant recovery
-- **Non-destructive:** Register writes only, firmware stays clean
-- **Fallback works:** If Gen 5 fails, system stays at stable 40GB/1410MHz
-- **80GB + 1410MHz guaranteed:** Gen 5 is bonus, not core feature
-
----
-
-## Timeline
-
-1. **Now:** Gen 5 unlock integrated, backups ready
-2. **Next:** Run exploit with Gen 5 attempt
-3. **Result:** Either Gen 5 works or falls back to Gen 2 (both functional)
-4. **Final:** 80GB + 1410MHz ✓, Gen 5 x8 as bonus
-
----
-
-## Questions?
-
-- **What if PCIe registers are read-only?** → Fallback to Gen 2, still 40GB/1410MHz
-- **What if firmware corruption happens?** → Recover instantly with backup
-- **Is 80GB guaranteed?** → YES, Gen 5 doesn't affect memory unlock
-- **Can I revert if Gen 5 causes issues?** → YES, restore backup + FLR
-
-You're protected by comprehensive backups. Ready to test? 🚀
+**Status**: Critical research completed, decision point reached.  
+**Decision Required**: Kernel patching vs firmware patching approach?
