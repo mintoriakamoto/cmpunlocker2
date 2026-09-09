@@ -50,17 +50,18 @@ esac
 ok "GPU: ${PCI_FULL} – ${GPU_NAME}"
 
 info "Step 3/6: Verifying driver compatibility"
-# Safety gate: check driver version (from pearlfortune safety approach)
+# Required: 610.43.03 (verified on GA100/GH100)
 DRIVER_VERSION=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)
 if [ -z "$DRIVER_VERSION" ]; then
-    warn "Could not detect driver version (nvidia-smi failed)"
-else
-    DRIVER_MAJOR=$(echo "$DRIVER_VERSION" | cut -d. -f1)
-    case "$DRIVER_MAJOR" in
-        58|59|60|61) ok "Driver ${DRIVER_VERSION} (verified compatible)" ;;
-        *) warn "Driver ${DRIVER_VERSION} (untested, may not work)" ;;
-    esac
+    err "Could not detect driver version (nvidia-smi failed)"
+    exit 1
 fi
+if [ "$DRIVER_VERSION" != "610.43.03" ]; then
+    err "Driver ${DRIVER_VERSION} is not supported"
+    echo "  Required: 610.43.03 (GA100/GH100 Falcon BootROM compatibility)"
+    exit 1
+fi
+ok "Driver ${DRIVER_VERSION} verified"
 
 info "Step 4/6: Locating GSP firmware"
 GSP_PATH=$(ls /lib/firmware/nvidia/*/gsp_tu10x.bin 2>/dev/null | sort -rV | head -1)
