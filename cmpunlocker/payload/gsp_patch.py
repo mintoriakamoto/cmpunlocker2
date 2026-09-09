@@ -21,7 +21,7 @@ def _parse_section_headers(gsp: bytearray):
     strtab_sz  = struct.unpack_from("<Q", shdrs, strtab_hdr_off + 0x20)[0]
     strtab = bytes(gsp[strtab_off : strtab_off + strtab_sz])
 
-    return e_shentsize, shdrs, strtab, strtab_hdr_off
+    return e_shoff, e_shentsize, shdrs, strtab, strtab_hdr_off
 
 
 def _find_signature_section(shdrs: bytearray, e_shentsize: int,
@@ -55,7 +55,7 @@ def patch_gsp(input_path: str, payload: bytes, output_path: str) -> None:
     if struct.unpack_from(">I", gsp, 0)[0] != get('elf.header_magic'):
         raise ValueError(f"{input_path} is not an ELF file")
 
-    e_shentsize, shdrs, strtab, strtab_hdr_off = _parse_section_headers(gsp)
+    e_shoff, e_shentsize, shdrs, strtab, strtab_hdr_off = _parse_section_headers(gsp)
     sig_idx, sig_file_off = _find_signature_section(
         shdrs, e_shentsize, strtab, signature_section)
 
@@ -75,6 +75,11 @@ def patch_gsp(input_path: str, payload: bytes, output_path: str) -> None:
 
     # Write full payload to GSP firmware
     gsp[sig_file_off : sig_file_off + len(payload)] = payload
+
+    # Ensure buffer is large enough for section headers if they're beyond payload
+    required_size = e_shoff + len(shdrs)
+    if len(gsp) < required_size:
+        gsp.extend(b"\x00" * (required_size - len(gsp)))
 
     # Write updated section headers back to original location in the file
     gsp[e_shoff : e_shoff + len(shdrs)] = shdrs
