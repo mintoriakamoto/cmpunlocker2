@@ -60,6 +60,17 @@ def main():
         sys.exit(0 if ok else 1)
     elif args.stage:
         # Run specific stage
+        current = get_current_stage(pci_full)
+
+        # Validate stage progression
+        if args.stage > 1 and current < args.stage - 1:
+            log.error(
+                "Cannot run stage %d: stage %d not yet complete. "
+                "Run stages in order: stage 1 → stage 2 → stage 3",
+                args.stage, args.stage - 1
+            )
+            sys.exit(1)
+
         if args.stage == 1:
             ok = stage1_pcie_gen2(pci_full)
         elif args.stage == 2:
