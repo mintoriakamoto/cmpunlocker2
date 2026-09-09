@@ -276,6 +276,20 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
     load_module()
     time.sleep(3)
 
+    # EXPLOIT: Write Gen 5 link control AFTER driver loads but before returning
+    # This gives the register a chance to stick without module reload interference
+    log.info("[%s] Writing Gen 5 link control (0x009088 = 0x06) post-driver-load", pci_full)
+    try:
+        with Bar0(pci_full) as bar0:
+            bar0.wr32(0x009088, 0x06)
+            val = bar0.rd32(0x009088)
+            if val == 0x06:
+                log.info("[%s] ✓ Gen 5 link control PERSISTED: 0x%08x", pci_full, val)
+            else:
+                log.warning("[%s] Gen 5 write read back as 0x%08x, may not persist", pci_full, val)
+    except Exception as e:
+        log.warning("[%s] Could not write Gen 5 control: %s", pci_full, e)
+
     all_ok = cfg1_ok and lmr_ok and ss0_ok and ss1_ok
     log.info("[%s] Pipeline complete — memory=%s compute=%s features=%s overall=%s",
              pci_full,
