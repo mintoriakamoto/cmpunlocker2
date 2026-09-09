@@ -45,18 +45,30 @@ memory_unlock:
     addr:  0x00100CE0
     note: "Link Memory Register"
   targets:
+    nativ_8gb:
+      cfg1: 0x02440000
+      lmr:  0x0000028A
+      note: "4 stacks × 2GB HBM2 = 8GB (CMP 170HX 4-stack variant, feature=0x00)"
     nativ_10gb:
       cfg1: 0x02449000
       lmr:  0x0000028A
-      note: "5 stacks × 2GB HBM2 = 10GB (CMP 170HX native)"
+      note: "5 stacks × 2GB HBM2 = 10GB (CMP 170HX 5-stack variant, feature=0x90)"
+    unlocked_32gb:
+      cfg1: 0x02660000
+      lmr:  0x0000028A
+      note: "4 stacks × 8GB HBM2e = 32GB (8GB model unlocked, feature=0x00)"
     unlocked_40gb:
       cfg1: 0x02669000
       lmr:  0x0000028A
-      note: "5 stacks × 8GB HBM2e = 40GB (community-verified on A100 80GB→40GB)"
+      note: "5 stacks × 8GB HBM2e = 40GB (10GB model, community-verified on A100)"
+    unlocked_64gb:
+      cfg1: 0x02770000
+      lmr:  0x0000028A
+      note: "4 stacks × 16GB HBM2e = 64GB (8GB model full capacity, feature=0x00)"
     unlocked_80gb:
       cfg1: 0x02779000
       lmr:  0x0000028A
-      note: "5 stacks × 16GB HBM2e = 80GB (strap=0x77 for full capacity)"
+      note: "5 stacks × 16GB HBM2e = 80GB (10GB model full capacity, feature=0x90)"
   default_target: unlocked_80gb
 
 # Multi-device support with hardware variants (from ecosystem research)
