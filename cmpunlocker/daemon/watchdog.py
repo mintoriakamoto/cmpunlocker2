@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from cmpunlocker.payload.gpu import find_all_gpus
 from cmpunlocker.payload.pipeline import run_full_unlock
+from cmpunlocker.payload.staged_unlock import get_current_stage
 from unlock.compute import apply_unlock as apply_compute, is_plm_open, is_unlocked
 from unlock.memory import apply_unlock as apply_memory, is_memory_unlocked
 from unlock.features import apply_feature_unlocks, is_pcie_gen2, is_pcie_gen3, is_pcie_gen4, is_pcie_gen5, is_nvlink_enabled
@@ -87,6 +88,14 @@ def _unlock_card(pci: str) -> None:
 
 def _check_card(pci: str, state: dict) -> None:
     try:
+        stage = get_current_stage(pci)
+        if stage < 3:
+            # Staged unlock incomplete, don't attempt reapply
+            if state[pci].get("_stage_warning") != stage:
+                log.warning("[%s] Unlock incomplete (stage %d/3), skipping reapply", pci, stage)
+                state[pci]["_stage_warning"] = stage
+            return
+
         if not is_plm_open(pci):
             log.warning("[%s] PLM closed — re-running full unlock", pci)
             state[pci] = {"plm": False, "compute": False, "memory": False}
@@ -160,10 +169,26 @@ def main() -> None:
         log.error("BAR0 access validation failed: %s — check permissions and hardware", e)
         sys.exit(1)
 
-    # Run initial unlock for each GPU
+    # Check unlock stage for each GPU
+    gpu_stages = {}
     for pci in gpus:
-        log.info("[%s] Running initial unlock", pci)
-        _unlock_card(pci)
+        stage = get_current_stage(pci)
+        gpu_stages[pci] = stage
+        if stage < 3:
+            log.warning(
+                "[%s] Unlock incomplete (stage %d/3). Run 'sudo install.sh --stage=%d' to continue",
+                pci, stage, stage + 1
+            )
+        else:
+            log.info("[%s] Unlock complete (stage 3/3), monitoring active", pci)
+
+    # Run initial unlock for each GPU that's not yet complete
+    for pci in gpus:
+        if gpu_stages[pci] < 3:
+            log.info("[%s] Skipping auto-reapply (incomplete stage %d/3)", pci, gpu_stages[pci])
+        else:
+            log.info("[%s] Running initial unlock", pci)
+            _unlock_card(pci)
 
     log.info("Entering monitor loop (interval=%ds)", CHECK_INTERVAL)
     state = {pci: {"plm": True, "compute": True, "memory": True} for pci in gpus}

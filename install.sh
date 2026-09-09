@@ -1,9 +1,10 @@
 #!/bin/bash
-# cmpunlocker install.sh — single-shot installer
+# cmpunlocker install.sh — D3DX9-pattern staged installer with mandatory reboots
 set -euo pipefail
 
 INSTALL_DIR="/opt/cmpunlocker"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STAGE=""
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
     RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -15,6 +16,46 @@ info() { echo -e "${CYAN}==>${NC} $*"; }
 ok()   { echo -e "${GREEN}✓${NC} $*"; }
 warn() { echo -e "${YELLOW}!${NC} $*"; }
 err()  { echo -e "${RED}✗${NC} $*" >&2; }
+
+# Parse command-line arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --stage=*)
+            STAGE="${1#--stage=}"
+            if [[ ! "$STAGE" =~ ^[1-3]$ ]]; then
+                err "Invalid stage: $STAGE. Must be 1, 2, or 3."
+                exit 1
+            fi
+            ;;
+        --help)
+            echo "Usage: sudo $0 [OPTIONS]"
+            echo ""
+            echo "D3DX9-pattern staged unlock with mandatory verification reboots:"
+            echo ""
+            echo "Options:"
+            echo "  --stage=1    Run Stage 1 only (PCIe Gen 2 unlock)"
+            echo "  --stage=2    Run Stage 2 only (PLM opening + core unlocks)"
+            echo "  --stage=3    Run Stage 3 only (Feature unlocks)"
+            echo "  (no option)  Run full unlock pipeline (all stages in one go)"
+            echo "  --help       Show this help message"
+            echo ""
+            echo "RECOMMENDED: Staged approach for verification:"
+            echo "  1. sudo $0 --stage=1        # Power-off and verify Gen 2"
+            echo "  2. sudo $0 --stage=2        # Power-off and verify 80GB + clock"
+            echo "  3. sudo $0 --stage=3        # Optional feature unlocks"
+            echo ""
+            echo "Environment variables:"
+            echo "  CMPUNLOCKER_PCI=0000:XX:YY.Z  Override GPU detection"
+            echo "  CMPUNLOCKER_TARGET=unlocked_80gb  Memory target (default)"
+            exit 0
+            ;;
+        *)
+            err "Unknown option: $1"
+            exit 1
+            ;;
+    esac
+    shift
+done
 
 if [ "$EUID" -ne 0 ]; then
     err "Run as root: sudo $0"
@@ -108,28 +149,90 @@ ok "Installed"
 
 info "Step 5/6: Running unlock"
 TARGET="${CMPUNLOCKER_TARGET:-unlocked_80gb}"
-python3 "${INSTALL_DIR}/cmpunlocker/payload/pipeline.py" \
-    "${PCI_FULL}" "${GSP_PATH}" "${TARGET}"
-ok "Unlock applied"
 
-info "Step 6/6: Enabling systemd service"
-cp "${INSTALL_DIR}/cmpunlocker/daemon/cmpunlocker.service" /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable cmpunlocker
-systemctl start cmpunlocker
-ok "Service enabled"
+# Determine which unlock method to use
+if [ -n "$STAGE" ]; then
+    # Staged unlock approach
+    python3 "${INSTALL_DIR}/cmpunlocker/payload/staged_unlock_cli.py" \
+        --stage="$STAGE" --pci="${PCI_FULL}" --gsp="${GSP_PATH}" --target="${TARGET}"
+    ok "Stage $STAGE unlock applied"
 
-echo
-echo -e "${CYAN}╔════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║${NC}   ${GREEN}✓ cmpunlocker installed${CYAN}             ║${NC}"
-echo -e "${CYAN}╚════════════════════════════════════════╝${NC}"
-echo
-echo "Verify: nvidia-smi --query-gpu=clocks.max.sm,memory.total --format=csv,noheader"
-echo "Daemon: journalctl -u cmpunlocker -f"
-echo
-echo "Optional: Enable PCIe Gen 4 (if motherboard supports it):"
-echo "  sudo ${INSTALL_DIR}/cmpunlocker/scripts/pcie_gen4_unlock.sh"
-echo "  sudo ${INSTALL_DIR}/cmpunlocker/scripts/pcie_gen4_unlock_bar0.py"
-echo ""
-echo "Optional: Enable PCIe Gen 2 (fallback if Gen 4 unavailable):"
-echo "  Feature is pre-configured in unlock — no additional steps needed"
+    # Print stage-specific instructions
+    case "$STAGE" in
+        1)
+            echo
+            echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════╗${NC}"
+            echo -e "${CYAN}║${NC}   ${GREEN}✓ STAGE 1 COMPLETE: PCIe Gen 2 Unlock${CYAN}                   ║${NC}"
+            echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════╝${NC}"
+            echo
+            echo -e "${YELLOW}!${NC} MANDATORY: Full power-off/on cycle for Gen 2 to persist:"
+            echo "  sudo shutdown -h now"
+            echo
+            echo "After power-on, verify Gen 2 is present:"
+            echo "  lspci -s ${PCI_FULL} | grep Speed"
+            echo "  # Expected: 'Speed 5GT/s' or higher"
+            echo
+            echo "Then proceed to Stage 2:"
+            echo "  sudo $0 --stage=2"
+            ;;
+        2)
+            echo
+            echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════╗${NC}"
+            echo -e "${CYAN}║${NC}   ${GREEN}✓ STAGE 2 COMPLETE: PLM Opening + Core Unlocks${CYAN}            ║${NC}"
+            echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════╝${NC}"
+            echo
+            echo -e "${YELLOW}!${NC} MANDATORY: Full power-off/on cycle for 80GB + SM clock to persist:"
+            echo "  sudo shutdown -h now"
+            echo
+            echo "After power-on, verify unlock is present:"
+            echo "  nvidia-smi --query-gpu=memory.total --format=csv,noheader"
+            echo "  # Expected: '81378 MiB' or similar (80GB+)"
+            echo
+            echo "  nvidia-smi --query-gpu=clocks.max.sm --format=csv,noheader"
+            echo "  # Expected: '1410 MHz' or higher"
+            echo
+            echo "Then optionally proceed to Stage 3 for feature unlocks:"
+            echo "  sudo $0 --stage=3"
+            ;;
+        3)
+            echo
+            echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════╗${NC}"
+            echo -e "${CYAN}║${NC}   ${GREEN}✓ STAGE 3 COMPLETE: Feature Unlocks Applied${CYAN}               ║${NC}"
+            echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════╝${NC}"
+            echo
+            echo "Feature unlocks applied (Gen 3-5, NVLink, ECC, ARC)"
+            echo
+            echo "Optional: Enable PCIe Gen 4 link retraining:"
+            echo "  sudo ${INSTALL_DIR}/cmpunlocker/scripts/pcie_gen4_unlock.sh"
+            echo
+            echo "Verify current state:"
+            echo "  nvidia-smi --query-gpu=clocks.max.sm,memory.total --format=csv,noheader"
+            echo "  lspci -s ${PCI_FULL} | grep Speed"
+            ;;
+    esac
+else
+    # Full unlock (all stages in one go)
+    python3 "${INSTALL_DIR}/cmpunlocker/payload/pipeline.py" \
+        "${PCI_FULL}" "${GSP_PATH}" "${TARGET}"
+    ok "Full unlock applied"
+
+    info "Step 6/6: Enabling systemd service"
+    cp "${INSTALL_DIR}/cmpunlocker/daemon/cmpunlocker.service" /etc/systemd/system/
+    systemctl daemon-reload
+    systemctl enable cmpunlocker
+    systemctl start cmpunlocker
+    ok "Service enabled"
+
+    echo
+    echo -e "${CYAN}╔════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║${NC}   ${GREEN}✓ cmpunlocker installed${CYAN}             ║${NC}"
+    echo -e "${CYAN}╚════════════════════════════════════════╝${NC}"
+    echo
+    echo "Verify: nvidia-smi --query-gpu=clocks.max.sm,memory.total --format=csv,noheader"
+    echo "Daemon: journalctl -u cmpunlocker -f"
+    echo
+    echo "Optional: Enable PCIe Gen 4 (if motherboard supports it):"
+    echo "  sudo ${INSTALL_DIR}/cmpunlocker/scripts/pcie_gen4_unlock.sh"
+    echo "  sudo ${INSTALL_DIR}/cmpunlocker/scripts/pcie_gen4_unlock_bar0.py"
+    exit 0
+fi
