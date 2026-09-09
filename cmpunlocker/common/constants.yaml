@@ -8,9 +8,8 @@ dmem_layout:
 # Community-verified unlock writes (from A100 80GB BAR0 dump analysis).
 # These values were empirically confirmed on a real A100 80GB → 40GB
 # unlock and ported to CMP 170HX by the kinako404 community.
-# The modified 610.43.03 driver uses DIFFERENT values (0x02779000 / 0x0000020B)
-# because it targets a newer firmware revision.
-# For 580.105.08 / 595.71.05 firmware, use the values below.
+# Universal across all driver versions (580.x, 590-595.x, 610.x).
+# Hardware registers (CFG1/LMR) are driver-agnostic.
 host_bar0_writes:
   ss0:
     addr:  0x0082381C
