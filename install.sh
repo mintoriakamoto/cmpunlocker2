@@ -31,16 +31,17 @@ ok "Environment OK"
 info "Step 2/6: Detecting GPU"
 # Support for CMP 170HX (GA100), 90HX (GH100), 50HX (GH100)
 # From ecosystem research: pearlfortune extends hardware support
-PCI=$(lspci -nn 2>/dev/null | grep -iE "10de:(20b0|20c2|2082|220d|2209)" | head -1 | awk '{print $1}')
-if [ -z "$PCI" ]; then
+LSPCI_LINE=$(lspci -nn 2>/dev/null | grep -iE "10de:(20b0|20c2|2082|220d|2209)" | head -1)
+if [ -z "$LSPCI_LINE" ]; then
     err "No CMP card found"
     echo "  Supported: CMP 170HX (10de:20b0/20c2/2082)"
     echo "  Supported: CMP 90HX (10de:220d)"
     echo "  Supported: CMP 50HX (10de:2209)"
     exit 1
 fi
+PCI=$(echo "$LSPCI_LINE" | awk '{print $1}')
 PCI_FULL="0000:${PCI}"
-GPU_ID=$(echo "$PCI" | grep -oE "10de:[0-9a-f]+" | cut -d: -f2)
+GPU_ID=$(echo "$LSPCI_LINE" | grep -oE "10de:([0-9a-f]+)" | cut -d: -f2)
 case "$GPU_ID" in
   20b0|20c2|2082) GPU_NAME="CMP 170HX (GA100)" ;;
   220d) GPU_NAME="CMP 90HX (GH100)" ;;
