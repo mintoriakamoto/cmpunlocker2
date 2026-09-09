@@ -22,8 +22,8 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --stage=*)
             STAGE="${1#--stage=}"
-            if [[ ! "$STAGE" =~ ^[1-3]$ ]]; then
-                err "Invalid stage: $STAGE. Must be 1, 2, or 3."
+            if [[ ! "$STAGE" =~ ^[1-2]$ ]]; then
+                err "Invalid stage: $STAGE. Must be 1 or 2."
                 exit 1
             fi
             ;;
@@ -33,16 +33,15 @@ while [[ $# -gt 0 ]]; do
             echo "D3DX9-pattern staged unlock with mandatory verification reboots:"
             echo ""
             echo "Options:"
-            echo "  --stage=1    Run Stage 1 only (PCIe Gen 2 unlock)"
-            echo "  --stage=2    Run Stage 2 only (PLM opening + core unlocks)"
-            echo "  --stage=3    Run Stage 3 only (Feature unlocks)"
+            echo "  --stage=1    Run Stage 1 only (PCIe Gen 2 unlock, manual)"
+            echo "  --stage=2    Run Stage 2 only (PLM + 80GB + compute + features)"
             echo "  (no option)  Run full unlock pipeline (all stages in one go)"
             echo "  --help       Show this help message"
             echo ""
-            echo "RECOMMENDED: Staged approach for verification:"
-            echo "  1. sudo $0 --stage=1        # Power-off and verify Gen 2"
-            echo "  2. sudo $0 --stage=2        # Power-off and verify 80GB + clock"
-            echo "  3. sudo $0 --stage=3        # Optional feature unlocks"
+            echo "RECOMMENDED: D3DX9-pattern staged approach:"
+            echo "  1. sudo $0 --stage=1        # Unlock Gen 2 → Power-off"
+            echo "  2. Power on (daemon auto-runs Stage 2: PLM + 80GB + features)"
+            echo "  3. Verify all unlocks with nvidia-smi"
             echo ""
             echo "Environment variables:"
             echo "  CMPUNLOCKER_PCI=0000:XX:YY.Z  Override GPU detection"
@@ -162,52 +161,44 @@ if [ -n "$STAGE" ]; then
         1)
             echo
             echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════╗${NC}"
-            echo -e "${CYAN}║${NC}   ${GREEN}✓ STAGE 1 COMPLETE: PCIe Gen 2 Unlock${CYAN}                   ║${NC}"
+            echo -e "${CYAN}║${NC}   ${GREEN}✓ STAGE 1 COMPLETE: PCIe Gen 2 Unlock Applied${CYAN}            ║${NC}"
             echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════╝${NC}"
             echo
             echo -e "${YELLOW}!${NC} MANDATORY: Full power-off/on cycle for Gen 2 to persist:"
             echo "  sudo shutdown -h now"
             echo
-            echo "After power-on, verify Gen 2 is present:"
+            echo "After power-on:"
+            echo "  • Daemon automatically runs Stage 2 (PLM + 80GB + compute + features)"
+            echo "  • All unlocks will be applied automatically"
+            echo "  • System may reboot again as part of the process"
+            echo ""
+            echo "After daemon completes, verify unlock:"
             echo "  lspci -s ${PCI_FULL} | grep Speed"
-            echo "  # Expected: 'Speed 5GT/s' or higher"
-            echo
-            echo "Then proceed to Stage 2:"
-            echo "  sudo $0 --stage=2"
+            echo "  nvidia-smi --query-gpu=memory.total,clocks.max.sm --format=csv,noheader"
+            echo "  # Expected: Gen 2+ speed, 80GB+ memory, 1410+ MHz clock"
             ;;
         2)
             echo
             echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════╗${NC}"
-            echo -e "${CYAN}║${NC}   ${GREEN}✓ STAGE 2 COMPLETE: PLM Opening + Core Unlocks${CYAN}            ║${NC}"
+            echo -e "${CYAN}║${NC}   ${GREEN}✓ STAGE 2 COMPLETE: Full Unlock Applied${CYAN}                  ║${NC}"
             echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════╝${NC}"
             echo
-            echo -e "${YELLOW}!${NC} MANDATORY: Full power-off/on cycle for 80GB + SM clock to persist:"
-            echo "  sudo shutdown -h now"
+            echo "Unlock complete! All features applied:"
+            echo "  • PLM registers opened"
+            echo "  • Memory unlocked to 80GB+"
+            echo "  • Compute clock unlocked to 1410+ MHz"
+            echo "  • PCIe Gen 2-5 enabled"
+            echo "  • NVLink, ECC, ARC features applied"
             echo
-            echo "After power-on, verify unlock is present:"
+            echo "Verify unlock is present:"
             echo "  nvidia-smi --query-gpu=memory.total --format=csv,noheader"
             echo "  # Expected: '81378 MiB' or similar (80GB+)"
             echo
             echo "  nvidia-smi --query-gpu=clocks.max.sm --format=csv,noheader"
             echo "  # Expected: '1410 MHz' or higher"
             echo
-            echo "Then optionally proceed to Stage 3 for feature unlocks:"
-            echo "  sudo $0 --stage=3"
-            ;;
-        3)
-            echo
-            echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════╗${NC}"
-            echo -e "${CYAN}║${NC}   ${GREEN}✓ STAGE 3 COMPLETE: Feature Unlocks Applied${CYAN}               ║${NC}"
-            echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════╝${NC}"
-            echo
-            echo "Feature unlocks applied (Gen 3-5, NVLink, ECC, ARC)"
-            echo
-            echo "Optional: Enable PCIe Gen 4 link retraining:"
-            echo "  sudo ${INSTALL_DIR}/cmpunlocker/scripts/pcie_gen4_unlock.sh"
-            echo
-            echo "Verify current state:"
-            echo "  nvidia-smi --query-gpu=clocks.max.sm,memory.total --format=csv,noheader"
             echo "  lspci -s ${PCI_FULL} | grep Speed"
+            echo "  # Expected: PCIe Gen 2 or higher"
             ;;
     esac
 else

@@ -169,26 +169,25 @@ def main() -> None:
         log.error("BAR0 access validation failed: %s — check permissions and hardware", e)
         sys.exit(1)
 
-    # Check unlock stage for each GPU
+    # Check unlock stage for each GPU and auto-run stage 2 if stage 1 complete
     gpu_stages = {}
     for pci in gpus:
         stage = get_current_stage(pci)
         gpu_stages[pci] = stage
-        if stage < 3:
-            log.warning(
-                "[%s] Unlock incomplete (stage %d/3). Run 'sudo install.sh --stage=%d' to continue",
-                pci, stage, stage + 1
-            )
-        else:
-            log.info("[%s] Unlock complete (stage 3/3), monitoring active", pci)
 
-    # Run initial unlock for each GPU that's not yet complete
-    for pci in gpus:
-        if gpu_stages[pci] < 3:
-            log.info("[%s] Skipping auto-reapply (incomplete stage %d/3)", pci, gpu_stages[pci])
-        else:
-            log.info("[%s] Running initial unlock", pci)
+        if stage == 1:
+            # Stage 1 complete, auto-run stage 2 (D3DX9 pattern)
+            log.info("[%s] Stage 1 complete (Gen 2), auto-running Stage 2 (PLM + 80GB + features)", pci)
+            log.info("[%s] Executing full unlock pipeline...", pci)
             _unlock_card(pci)
+            log.info("[%s] Stage 2 complete, reboot may be triggered", pci)
+        elif stage == 2:
+            log.info("[%s] Unlock complete (stage 2/2), monitoring active", pci)
+        else:
+            log.warning(
+                "[%s] Unlock incomplete (stage %d/2). Run 'sudo install.sh --stage=1' to start",
+                pci, stage
+            )
 
     log.info("Entering monitor loop (interval=%ds)", CHECK_INTERVAL)
     state = {pci: {"plm": True, "compute": True, "memory": True} for pci in gpus}
