@@ -231,12 +231,11 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
              pci_full, mem['cfg1'], mem['lmr'])
     log.info("[%s] Current CFG1 state: 0x%08x (using as unlock value)", pci_full, current_cfg1)
 
-    # Two-phase write: first unlock with current state, then target value
-    # This works because firmware recognizes the current state as valid unlock
-    log.info("[%s] Phase 1: Unlock with current state 0x%08x", pci_full, current_cfg1)
-    _write_bar0(pci_full, cfg1_addr, current_cfg1, 'CFG1_UNLOCK')
+    # Try writing target value twice: firmware might need two writes to accept new value
+    log.info("[%s] Phase 1: Pre-write target 0x%08x", pci_full, mem['cfg1'])
+    _write_bar0(pci_full, cfg1_addr, mem['cfg1'], 'CFG1_PRE')
 
-    log.info("[%s] Phase 2: Write target 0x%08x", pci_full, mem['cfg1'])
+    log.info("[%s] Phase 2: Write target 0x%08x (confirmed)", pci_full, mem['cfg1'])
     cfg1_ok = _write_bar0(pci_full, cfg1_addr, mem['cfg1'], 'CFG1')
     lmr_ok  = _write_bar0(pci_full, lmr_addr, mem['lmr'], 'LMR')
 
