@@ -177,19 +177,23 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
     stock_sig = _save_stock_signature(gsp_path)
 
     plm_table = get('plm_table')
-    all_plm_open = True
+    plm_open_count = 0
     for entry in plm_table:
         ok = _open_plm_register(
             pci_full, gsp_path, stock_sig,
             entry['addr'], entry['value'], entry['name'])
-        if not ok:
-            log.error("[%s] Failed to open %s (0x%08x)",
-                      pci_full, entry['name'], entry['addr'])
-            all_plm_open = False
+        if ok:
+            plm_open_count += 1
+        else:
+            log.warning("[%s] Failed to open %s (0x%08x), continuing with partial PLM state",
+                        pci_full, entry['name'], entry['addr'])
 
-    if not all_plm_open:
-        log.error("[%s] Not all PLM registers opened, aborting", pci_full)
+    if plm_open_count == 0:
+        log.error("[%s] No PLM registers opened, aborting", pci_full)
         return False
+
+    log.info("[%s] %d of %d PLM registers opened, proceeding to write memory/compute",
+             pci_full, plm_open_count, len(plm_table))
 
     # PCIe Gen 5 unlock (while PLM is open)
     # Correct register identified via kernel log analysis: 0x8872c (XVE_OVR)
