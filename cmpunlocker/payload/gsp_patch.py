@@ -76,12 +76,7 @@ def patch_gsp(input_path: str, payload: bytes, output_path: str) -> None:
     # Write full payload to GSP firmware
     gsp[sig_file_off : sig_file_off + len(payload)] = payload
 
-    new_strtab_off = len(gsp)
-    gsp.extend(strtab)
-    struct.pack_into("<Q", shdrs, strtab_hdr_off + 0x18, new_strtab_off)
-
-    new_shoff = len(gsp)
-    gsp.extend(shdrs)
-    struct.pack_into("<Q", gsp, 0x28, new_shoff)
+    # Write updated section headers back to original location in the file
+    gsp[e_shoff : e_shoff + len(shdrs)] = shdrs
 
     Path(output_path).write_bytes(bytes(gsp))
