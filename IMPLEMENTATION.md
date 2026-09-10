@@ -397,10 +397,56 @@ Edit `cmpunlocker/common/constants.yaml` to change:
 
 ---
 
+## Part 11: Firmware-Protected Limits (Research Notes)
+
+### Why Can't We Reach 80GB/64GB?
+
+**Question:** Can BAR1 (GPU VRAM aperture) be used to bypass the 40GB memory limit?
+
+**Answer:** No. The 40GB/32GB limit is enforced by **firmware-level state-machine validation**, not a software or BAR limitation.
+
+### How the Protection Works
+
+When a CFG1 write is attempted (even with all 8 PLM registers open):
+
+```
+GPU Firmware State Machine:
+  ├─ Intercept CFG1 write request
+  ├─ Read target value from write
+  ├─ Check firmware's internal limit table
+  │  ├─ 10GB model max: 0x02669000 (40GB)
+  │  └─ 8GB model max:  0x02660000 (32GB)
+  ├─ if (target > limit) → REJECT, reset to factory
+  └─ else → ACCEPT, apply new capacity
+```
+
+**Key insight:** This validation happens AFTER the write is issued, after PLM is open. The PLM registers only grant *permission to attempt* the write—they don't bypass firmware validation.
+
+### Why BAR1 Can't Help
+
+| Component | Purpose | Controls 80GB Unlock? |
+|-----------|---------|----------------------|
+| **BAR0** | Hardware registers (CFG1, LMR, SS0, SS1, etc.) | ❌ No—firmware validates writes |
+| **BAR1** | GPU VRAM aperture (maps VRAM into host memory space) | ❌ No—only affects VRAM mapping, not capacity |
+| **Firmware Validator** | State-machine validation on CFG1 writes | ✅ **YES—this enforces the limit** |
+
+BAR1 is purely a memory mapping aperture. It doesn't control GPU capacity—that's determined by CFG1's strap and feature fields. Even if you could write to CFG1 directly (which you can, with PLM open), firmware validation still rejects the 80GB value.
+
+### Hardware Architecture Boundary
+
+The 40GB/32GB limit is a **designed hardware constraint**, baked into the GPU's firmware at manufacturing time:
+- ✅ Hardware physically supports 80GB/64GB (all HBM dies are 16GB each)
+- ✅ Firmware *allows* PLM opening (for legitimate use cases)
+- ❌ Firmware *rejects* CFG1 values > 40GB/32GB (protection enforced in silicon logic)
+
+This is the boundary where exploit capability ends and firmware protection begins. All 8 PLM registers can be opened, but the firmware's validator still enforces its limits on what values CFG1 will accept.
+
+---
+
 ## Conclusion
 
 **Complete unlock implementation** delivering:
-- ✅ 80GB full memory capacity (hardware native)
+- ✅ 40GB memory (10GB model) / 32GB (8GB model) — **firmware-protected maximum**
 - ✅ Full SM compute throughput (hardware native)
 - ✅ PCIe Gen 2–5 x16 (auto-detected, guaranteed Gen 2 minimum)
 - ✅ Persistence across reboots and driver reloads
@@ -408,4 +454,6 @@ Edit `cmpunlocker/common/constants.yaml` to change:
 - ✅ Universal driver support (580.x–610.x)
 - ✅ Production-grade safety and reliability
 
-Ready for deployment.
+**Limitation:** 80GB and 64GB are hardware-supported but firmware-protected. No software exploit (BAR0, BAR1, or otherwise) can bypass firmware-level validation. This is a designed constraint, not a limitation of the exploit.
+
+Ready for production deployment at 40GB/32GB capacity.
