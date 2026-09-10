@@ -197,7 +197,34 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
         log.info("[%s] Using 40GB PLM unlock values", pci_full)
 
     plm_open_count = 0
+
+    # CRITICAL: Save WPR2 lo/hi BEFORE PLM loop (matches driver patch exactly).
+    # Driver restores WPR2 before EACH PLM attempt to prevent state corruption.
+    wpr2_lo_addr = get('host_bar0_writes.wpr2_lo.addr')
+    wpr2_hi_addr = get('host_bar0_writes.wpr2_hi.addr')
+    wpr2_lo_val = get('host_bar0_writes.wpr2_lo.value')
+    wpr2_hi_val = get('host_bar0_writes.wpr2_hi.value')
+    try:
+        from payload.bar0 import Bar0
+        with Bar0(pci_full) as bar0:
+            saved_wpr2_lo = bar0.rd32(wpr2_lo_addr)
+            saved_wpr2_hi = bar0.rd32(wpr2_hi_addr)
+        log.info("[%s] Saved WPR2: lo=0x%08x hi=0x%08x", pci_full, saved_wpr2_lo, saved_wpr2_hi)
+    except Exception:
+        saved_wpr2_lo = wpr2_lo_val
+        saved_wpr2_hi = wpr2_hi_val
+        log.info("[%s] Using default WPR2: lo=0x%08x hi=0x%08x", pci_full, saved_wpr2_lo, saved_wpr2_hi)
+
     for entry in plm_table:
+        # Restore WPR2 before each PLM attempt (matches driver patch)
+        try:
+            from payload.bar0 import Bar0
+            with Bar0(pci_full) as bar0:
+                bar0.wr32(wpr2_lo_addr, saved_wpr2_lo)
+                bar0.wr32(wpr2_hi_addr, saved_wpr2_hi)
+        except Exception:
+            pass
+
         ok = _open_plm_register(
             pci_full, gsp_path, stock_sig,
             entry['addr'], entry['value'], entry['name'])
@@ -206,6 +233,16 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
         else:
             log.warning("[%s] Failed to open %s (0x%08x), continuing with partial PLM state",
                         pci_full, entry['name'], entry['addr'])
+
+    # Restore WPR2 after PLM loop (matches driver patch)
+    try:
+        from payload.bar0 import Bar0
+        with Bar0(pci_full) as bar0:
+            bar0.wr32(wpr2_lo_addr, saved_wpr2_lo)
+            bar0.wr32(wpr2_hi_addr, saved_wpr2_hi)
+        log.info("[%s] Restored WPR2 after PLM loop", pci_full)
+    except Exception:
+        pass
 
     if plm_open_count == 0:
         log.error("[%s] No PLM registers opened, aborting", pci_full)
