@@ -230,6 +230,26 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
     targets = get('memory_unlock.targets')
     mem = targets[target]
 
+    # Auto-detect device ID and select correct LMR value
+    # CRITICAL: LMR is hardware-variant-specific (from driver patch):
+    #   8GB model (10de:20c2): LMR=0x0000020B
+    #   10GB model (10de:2082): LMR=0x0000028A
+    device_variants = get('device_variants')
+    lmr_value = mem['lmr']  # fallback to target default
+    detected_devid = None
+    for devid_key, variant in device_variants.items():
+        if pci_full.endswith(devid_key.split(':')[1]) or devid_key in pci_full:
+            if 'lmr' in variant:
+                lmr_value = variant['lmr']
+                detected_devid = devid_key
+                log.info("[%s] Detected device %s (%s), using LMR=0x%08x",
+                         pci_full, devid_key, variant.get('name', '?'), lmr_value)
+            break
+
+    if detected_devid is None:
+        log.warning("[%s] Could not detect device variant, using default LMR=0x%08x",
+                    pci_full, lmr_value)
+
     # Initialize WPR2 registers (may be required before CFG1 writes stick)
     log.info("[%s] Initializing WPR2 memory protection registers", pci_full)
     wpr2_lo_ok = _write_bar0(pci_full, get('host_bar0_writes.wpr2_lo.addr'),
@@ -246,23 +266,24 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
     from payload.bar0 import Bar0
 
     log.info("[%s] Writing memory unlock: CFG1=0x%08x LMR=0x%08x",
-             pci_full, mem['cfg1'], mem['lmr'])
+             pci_full, mem['cfg1'], lmr_value)
 
     with Bar0(pci_full) as bar0:
         # Step 1: Read firmware-signaled LMR value (this is the UNLOCK value)
         firmware_lmr = bar0.rd32(lmr_addr)
         log.info("[%s] Firmware-signaled LMR: 0x%08x (unlock key)", pci_full, firmware_lmr)
 
-        # Step 2: Write firmware-signaled LMR value (unlocks CFG1)
-        log.info("[%s] Writing LMR=0x%08x to unlock CFG1", pci_full, firmware_lmr)
-        bar0.wr32(lmr_addr, firmware_lmr)
+        # Step 2: Write LMR (device-variant-specific, NOT firmware-signaled)
+        # The driver patch uses a fixed LMR per hardware variant, not the firmware readback.
+        log.info("[%s] Writing LMR=0x%08x (device-variant-specific)", pci_full, lmr_value)
+        bar0.wr32(lmr_addr, lmr_value)
         lmr_check = bar0.rd32(lmr_addr)
-        lmr_ok = lmr_check == firmware_lmr
+        lmr_ok = lmr_check == lmr_value
         if lmr_ok:
             log.info("[%s] LMR_UNLOCK = 0x%08x OK", pci_full, lmr_check)
         else:
             log.warning("[%s] LMR_UNLOCK failed (wrote 0x%08x, got 0x%08x)",
-                       pci_full, firmware_lmr, lmr_check)
+                       pci_full, lmr_value, lmr_check)
 
         # Step 3: Write CFG1 target (while BAR0 still open, same mmap context)
         log.info("[%s] Writing CFG1 target=0x%08x (atomic with LMR)", pci_full, mem['cfg1'])

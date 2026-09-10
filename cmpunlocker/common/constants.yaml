@@ -72,10 +72,15 @@ memory_unlock:
 
 # Multi-device support with hardware variants (from ecosystem research)
 # Extended to: 170HX (GA100), 90HX (GH100), 50HX (GH100 derivative)
+#
+# CRITICAL: LMR value is hardware-variant-specific (from driver patch):
+#   8GB model (10de:20c2): LMR=0x0000020B (always, for all targets)
+#   10GB model (10de:2082): LMR=0x0000028A (always, for all targets)
+#   10de:20b0: assume 10GB variant (LMR=0x0000028A) until verified
 device_variants:
-  "10de:20b0": { name: "CMP 170HX", arch: "GA100", verified: true }
-  "10de:20c2": { name: "CMP 170HX", arch: "GA100", verified: true }
-  "10de:2082": { name: "CMP 170HX", arch: "GA100", verified: true }
+  "10de:20b0": { name: "CMP 170HX", arch: "GA100", hbm_model: "10gb", lmr: 0x0000028A, verified: true }
+  "10de:20c2": { name: "CMP 170HX", arch: "GA100", hbm_model: "8gb",  lmr: 0x0000020B, verified: true }
+  "10de:2082": { name: "CMP 170HX", arch: "GA100", hbm_model: "10gb", lmr: 0x0000028A, verified: true }
   "10de:220d": { name: "CMP 90HX", arch: "GH100", verified: true }
   "10de:2209": { name: "CMP 50HX", arch: "GH100", verified: true }
 
