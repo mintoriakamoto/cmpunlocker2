@@ -62,11 +62,11 @@ def test_lmr_values_consistent():
     assert lmr_values == {0x0000028A}, f"unexpected LMR values: {lmr_values}"
 
 
-def test_default_target_is_80gb():
-    """Default target should be unlocked_80gb (full capacity)."""
+def test_default_target_is_40gb():
+    """Default target should be unlocked_40gb (80GB is firmware-blocked)."""
     from common.constants import get
     default = get("memory_unlock.default_target")
-    assert default == "unlocked_80gb"
+    assert default == "unlocked_40gb"
 
 
 def test_pipeline_accepts_target():

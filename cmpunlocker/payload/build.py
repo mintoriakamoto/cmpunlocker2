@@ -109,11 +109,12 @@ def build(target: str = None) -> bytes:
     lmr  = targets[target]['lmr']
     feat_ovr = get('host_bar0_writes.feat_ovr_plm.value')
 
-    # The full pipeline runs fill_payload eight times (one per PLM table
+    # The full pipeline runs fill_payload eleven times (one per PLM table
     # entry) and then twice more (CFG1, LMR). The build() function
     # returns a payload for the FIRST PLM entry (WPR_CFG) — subsequent
     # entries use refill_payload().
-    plm_table = get('plm_table')
+    plm_ref = get('plm_table')  # e.g. "plm_table_40gb" (a reference string)
+    plm_table = get(plm_ref)    # resolve to actual list
     first_plm = plm_table[0]
     return fill_payload(first_plm['addr'], first_plm['value'])
 

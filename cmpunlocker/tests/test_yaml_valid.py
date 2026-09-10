@@ -91,11 +91,13 @@ def test_memory_targets_valid():
 
 
 def test_plm_table_valid():
-    """Verify the PLM table has exactly 4 entries with valid addresses."""
+    """Verify the PLM table has 11 entries with valid addresses."""
     with open(CONSTANTS_PATH, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
-    plm = data["plm_table"]
-    assert len(plm) == 4, f"PLM table must have 4 entries, has {len(plm)}"
+    # plm_table is a reference string like "plm_table_40gb", resolve it
+    plm_ref = data["plm_table"]
+    plm = data[plm_ref]
+    assert len(plm) == 11, f"PLM table must have 11 entries, has {len(plm)}"
     for entry in plm:
         assert "addr" in entry
         assert "value" in entry
