@@ -68,7 +68,7 @@ memory_unlock:
       cfg1: 0x02779000
       lmr:  0x0000028A
       note: "5 stacks × 16GB HBM2e = 80GB (10GB model full capacity, feature=0x90)"
-  default_target: unlocked_80gb
+  default_target: unlocked_40gb
 
 # Multi-device support with hardware variants (from ecosystem research)
 # Extended to: 170HX (GA100), 90HX (GH100), 50HX (GH100 derivative)
@@ -150,37 +150,41 @@ feature_unlocks:
     value: 0x00000010
     note: "ECC scrub interval (community guess, NOT verified)"
 
-# PLM (Platform Lock Manager) registers - CRITICAL: Different for 40GB vs 80GB!
-# 8 separate PLM registers must be opened for full initialization:
-# - PLM[0-3]: Core memory/compute unlock (WPR_CFG, FBPA, WPR, FEAT)
-# - PLM[4-7]: PCIe/feature unlock (XVE, XVE_B, XVE_C, FEAT2)
-# Each is opened by refilling ROP payload and triggering BootROM load.
+# PLM (Platform Lock Manager) registers — 11 registers must be opened.
+# Matches the driver patch (sec2-postbl-plm-ss-cfg.patch) exactly.
+# All 11 PLMs use the same all-1s values for both 40GB and 80GB targets.
+# The difference between 40GB and 80GB is only CFG1/LMR, not PLMs.
 #
-# DISCOVERY: 40GB and 80GB require DIFFERENT PLM unlock signatures!
-# Discovered in test b9kujtq5y.output - 80GB uses all-1s pattern (0xffffffff)
+# PLM[0-7]:  Core registers (WPR_CFG, FBPA, WPR, FEAT, XVE, XVE_B, XVE_C, FEAT2)
+# PLM[8-10]: Extended registers (OPT_PLM, PJTAG_PLM, PJTAG_SEC_PLM)
 
-plm_table_40gb:  # For 10GB → 40GB unlock
-  - { addr: 0x001FA7CC, value: 0x0004cb8f, name: "WPR_CFG" }
-  - { addr: 0x009A0148, value: 0xffffff8f, name: "FBPA"     }
-  - { addr: 0x001FA7C4, value: 0x0004cb8f, name: "WPR"      }
-  - { addr: 0x00823804, value: 0xfffffcee, name: "FEAT"     }
-  - { addr: 0x00088FF4, value: 0xffffff8f, name: "XVE"      }
-  - { addr: 0x00088AB4, value: 0xFFFFFFFF, name: "XVE_B"    }
-  - { addr: 0x00088FF8, value: 0xFFFFFFFF, name: "XVE_C"    }
-  - { addr: 0x00823B00, value: 0xfffffcee, name: "FEAT2"    }
+plm_table_40gb:  # For 10GB → 40GB unlock (all-1s, matches driver patch)
+  - { addr: 0x001FA7CC, value: 0xfffff0ff, name: "WPR_CFG" }
+  - { addr: 0x009A0148, value: 0xffffffff, name: "FBPA"     }
+  - { addr: 0x001FA7C4, value: 0xffffffff, name: "WPR"      }
+  - { addr: 0x00823804, value: 0xffffffff, name: "FEAT"     }
+  - { addr: 0x00088FF4, value: 0xffffffff, name: "XVE"      }
+  - { addr: 0x00088AB4, value: 0xffffffff, name: "XVE_B"    }
+  - { addr: 0x00088FF8, value: 0xffffffff, name: "XVE_C"    }
+  - { addr: 0x00823B00, value: 0xffffffff, name: "FEAT2"    }
+  - { addr: 0x008200FC, value: 0xffffffff, name: "OPT_PLM"  }
+  - { addr: 0x0000C840, value: 0xffffffff, name: "PJTAG_PLM" }
+  - { addr: 0x0000C848, value: 0xffffffff, name: "PJTAG_SEC_PLM" }
 
-plm_table_80gb:  # For 10GB → 80GB unlock (discovered values)
-  - { addr: 0x001FA7CC, value: 0xfffff0ff, name: "WPR_CFG" }  # All-1s pattern
-  - { addr: 0x009A0148, value: 0xffffffff, name: "FBPA"     }  # All-1s
-  - { addr: 0x001FA7C4, value: 0xffffffff, name: "WPR"      }  # All-1s
-  - { addr: 0x00823804, value: 0xffffffff, name: "FEAT"     }  # All-1s (vs 0xfffffcee)
-  - { addr: 0x00088FF4, value: 0xffffffff, name: "XVE"      }  # All-1s (vs 0xffffff8f)
-  - { addr: 0x00088AB4, value: 0xFFFFFFFF, name: "XVE_B"    }  # (same)
-  - { addr: 0x00088FF8, value: 0xFFFFFFFF, name: "XVE_C"    }  # (same)
-  - { addr: 0x00823B00, value: 0xffffffff, name: "FEAT2"    }  # All-1s (vs 0xfffffcee)
+plm_table_80gb:  # For 10GB → 80GB unlock (all-1s, matches driver patch)
+  - { addr: 0x001FA7CC, value: 0xfffff0ff, name: "WPR_CFG" }
+  - { addr: 0x009A0148, value: 0xffffffff, name: "FBPA"     }
+  - { addr: 0x001FA7C4, value: 0xffffffff, name: "WPR"      }
+  - { addr: 0x00823804, value: 0xffffffff, name: "FEAT"     }
+  - { addr: 0x00088FF4, value: 0xffffffff, name: "XVE"      }
+  - { addr: 0x00088AB4, value: 0xffffffff, name: "XVE_B"    }
+  - { addr: 0x00088FF8, value: 0xffffffff, name: "XVE_C"    }
+  - { addr: 0x00823B00, value: 0xffffffff, name: "FEAT2"    }
+  - { addr: 0x008200FC, value: 0xffffffff, name: "OPT_PLM"  }
+  - { addr: 0x0000C840, value: 0xffffffff, name: "PJTAG_PLM" }
+  - { addr: 0x0000C848, value: 0xffffffff, name: "PJTAG_SEC_PLM" }
 
-# Default: use 80GB since that's the target
-plm_table: plm_table_80gb
+plm_table: plm_table_40gb
 
 # 24-DWORD ROP payload (community-verified on A100 80GB silicon).
 # Placed in the .fwsignature_ga100 ELF section. The BootROM loads it

@@ -2,12 +2,12 @@
 pipeline.py — Run the full unlock sequence.
 
 Mirrors the open-gpu-kernel-modules-610.43.03 fork's SEC2 post-bootloader
-timing unlock exactly, extended to 8 PLM registers:
+timing unlock exactly, extended to 11 PLM registers:
 
   1. Stop display manager, unload nvidia modules
   2. Find GSP firmware and the stock signature section
   3. Save the stock signature for later restore
-  4. For each of 8 PLM registers (WPR_CFG, FBPA, WPR, FEAT, XVE, XVE_B, XVE_C, FEAT2):
+  4. For each of 11 PLM registers (WPR_CFG, FBPA, WPR, FEAT, XVE, XVE_B, XVE_C, FEAT2, OPT_PLM, PJTAG_PLM, PJTAG_SEC_PLM):
      a. Refill the ROP payload with the target address/value
      b. Patch the GSP firmware .fwsignature_ga100 section
      c. modprobe nvidia → triggers kgspBootGspRm → kgspExecuteBooterLoad
@@ -203,18 +203,6 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
     log.info("[%s] %d of %d PLM registers opened, proceeding to write memory/compute",
              pci_full, plm_open_count, len(plm_table))
 
-    # PCIe Gen 5 unlock (while PLM is open)
-    # Correct register identified via kernel log analysis: 0x8872c (XVE_OVR)
-    # Previous attempts used wrong registers (0x88ff4, 0x88c1c, 0x000088)
-    # This time: use the correct override register discovered through reverse engineering
-    log.info("[%s] Attempting PCIe Gen 5 x8 unlock (XVE_OVR @ 0x8872c)", pci_full)
-    from unlock.pcie_gen5 import unlock_pcie_gen5
-    pcie_gen5_ok = unlock_pcie_gen5(pci_full)
-    if pcie_gen5_ok:
-        log.info("[%s] ✓ PCIe Gen 5 enabled", pci_full)
-    else:
-        log.warning("[%s] PCIe Gen 5 unlock did not stick, continuing with Gen 2", pci_full)
-
     targets = get('memory_unlock.targets')
     mem = targets[target]
 
@@ -283,51 +271,6 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
     log.info("[%s] Reloading driver with restored signature", pci_full)
     load_module()
     time.sleep(3)
-
-    # GEN 5 UNLOCK SEQUENCE (Complete method using PCI Config Space)
-    # Step 1: Firmware patch to unlock OTP fuse check
-    log.info("[%s] === COMPLETE GEN 5 UNLOCK ===", pci_full)
-    log.info("[%s] Step 1: Patching firmware to unlock OTP fuse Gen 5 capability...", pci_full)
-    from payload.firmware_fuse_unlock import unlock_gen5_via_firmware
-
-    # Create temp patched firmware
-    fw_backup = gsp_path + ".gen5"
-    try:
-        unlock_gen5_via_firmware(backup, fw_backup)
-        # Swap firmware for Gen 5 unlock attempt
-        shutil.copy2(fw_backup, gsp_path)
-        log.info("[%s] Firmware patched, reloading driver...", pci_full)
-        aggressive_unload()
-        load_module()
-        time.sleep(3)
-    except Exception as e:
-        log.warning("[%s] Firmware patch unavailable: %s", pci_full, e)
-
-    # Step 2: PCI Config Space unlock (requires Gen 5 reported by firmware)
-    log.info("[%s] Step 2: Triggering Gen 5 x16 via PCI Config Space...", pci_full)
-    from unlock.pcie_config_unlock import unlock_pcie_gen5_config
-
-    try:
-        gen5_success = unlock_pcie_gen5_config(pci_full)
-        if gen5_success:
-            log.info("[%s] ✓ PCIe Gen 5 x16 UNLOCKED!", pci_full)
-        else:
-            log.warning("[%s] PCIe Gen 5 config unlock did not succeed", pci_full)
-    except Exception as e:
-        log.warning("[%s] PCIe Gen 5 unlock error: %s", pci_full, e)
-
-    # Fallback: BAR0-based Gen 5 write
-    log.info("[%s] Fallback: Writing Gen 5 via BAR0 (0x009088 = 0x06)...", pci_full)
-    try:
-        with Bar0(pci_full) as bar0:
-            bar0.wr32(0x009088, 0x06)
-            val = bar0.rd32(0x009088)
-            if val == 0x06:
-                log.info("[%s] ✓ Gen 5 BAR0 write persisted: 0x%08x", pci_full, val)
-            else:
-                log.warning("[%s] Gen 5 BAR0 write read back as 0x%08x", pci_full, val)
-    except Exception as e:
-        log.warning("[%s] BAR0 Gen 5 write error: %s", pci_full, e)
 
     all_ok = cfg1_ok and lmr_ok and ss0_ok and ss1_ok
     log.info("[%s] Pipeline complete — memory=%s compute=%s features=%s overall=%s",
