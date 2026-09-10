@@ -103,9 +103,13 @@ def _open_plm_register(pci_full: str, gsp_path: str, stock_sig: bytes,
 
     for attempt in range(2):
         aggressive_unload()
+
+        # FLR reset BEFORE load — clean GPU state before exploit
+        if not flr_reset(pci_full):
+            log.warning("[%s] FLR failed on attempt %d, trying without", pci_full, attempt + 1)
+
         load_module()
         time.sleep(5)
-        flr_reset(pci_full)
 
         try:
             from payload.bar0 import Bar0

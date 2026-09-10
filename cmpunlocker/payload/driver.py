@@ -1,7 +1,10 @@
 import glob
+import logging
 import os
 import subprocess
 import time
+
+log = logging.getLogger(__name__)
 
 
 def stop_display_manager() -> None:
@@ -17,6 +20,14 @@ def unload_modules() -> None:
         subprocess.run(["modprobe", "-r", mod], capture_output=True, check=False)
     time.sleep(2)
 
+    # Verify modules actually unloaded
+    lsmod = subprocess.run(["lsmod"], capture_output=True, text=True, check=False).stdout
+    if "nvidia" in lsmod:
+        log.warning("nvidia modules still loaded after modprobe -r, trying rmmod -f")
+        for mod in ("nvidia_uvm", "nvidia_drm", "nvidia_modeset", "nvidia"):
+            subprocess.run(["rmmod", "-f", mod], capture_output=True, check=False)
+        time.sleep(1)
+
 
 def load_module() -> None:
     result = subprocess.run(["modprobe", "nvidia"], capture_output=True, text=True, check=False)
@@ -24,25 +35,58 @@ def load_module() -> None:
         raise RuntimeError(f"modprobe nvidia failed: {result.stderr.strip()}")
 
 
-def flr_reset(pci_full: str) -> None:
-    # Ensure BDF has domain prefix (0000:xx:xx.x format)
-    if ":" not in pci_full:
-        raise ValueError(f"Invalid PCI BDF format: {pci_full}")
-    # If only 2 colons (xx:xx.x), add 0000 domain prefix
-    if pci_full.count(":") == 1:
-        pci_full = f"0000:{pci_full}"
+def is_device_visible(pci_full: str) -> bool:
+    """Check if the GPU is visible in PCI."""
+    path = f"/sys/bus/pci/devices/{pci_full}"
+    return os.path.exists(path)
+
+
+def is_driver_loaded(pci_full: str) -> bool:
+    """Check if nvidia driver is bound to the GPU."""
+    driver_path = f"/sys/bus/pci/devices/{pci_full}/driver"
+    if not os.path.exists(driver_path):
+        return False
+    driver = os.path.basename(os.readlink(driver_path))
+    return "nvidia" in driver
+
+
+def flr_reset(pci_full: str) -> bool:
+    """Perform Function Level Reset on the GPU.
+
+    Returns True if reset succeeded and device is visible after.
+    Must be called with nvidia module UNLOADED.
+    """
+    if not is_device_visible(pci_full):
+        log.error("[%s] Device not visible before FLR", pci_full)
+        return False
+
     reset_path = f"/sys/bus/pci/devices/{pci_full}/reset"
-    with open(reset_path, "w", encoding="utf-8") as f:
-        f.write("1")
+    try:
+        with open(reset_path, "w", encoding="utf-8") as f:
+            f.write("1")
+    except OSError as e:
+        log.error("[%s] FLR write failed: %s", pci_full, e)
+        return False
+
+    # Wait for device to re-enumerate
     time.sleep(3)
+
+    if not is_device_visible(pci_full):
+        log.error("[%s] Device disappeared after FLR", pci_full)
+        return False
+
+    log.info("[%s] FLR reset succeeded", pci_full)
+    return True
 
 
 def aggressive_unload() -> None:
+    """Unload nvidia modules and kill all GPU users."""
     my_pid = str(os.getpid())
 
     stop_display_manager()
     subprocess.run(["systemctl", "stop", "nvidia-persistenced"], capture_output=True, check=False)
 
+    # Kill any processes using nvidia devices
     for dev in glob.glob("/dev/nvidia*") + ["/dev/nvidiactl"]:
         if not os.path.exists(dev):
             continue
@@ -53,8 +97,3 @@ def aggressive_unload() -> None:
     time.sleep(1)
 
     unload_modules()
-
-    lsmod = subprocess.run(["lsmod"], capture_output=True, text=True, check=False).stdout
-    if "nvidia" in lsmod:
-        for mod in ("nvidia_uvm", "nvidia_drm", "nvidia_modeset", "nvidia"):
-            subprocess.run(["rmmod", "-f", mod], capture_output=True, check=False)
