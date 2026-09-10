@@ -147,7 +147,7 @@ cp -r "${SCRIPT_DIR}" "${INSTALL_DIR}"
 ok "Installed"
 
 info "Step 5/6: Running unlock"
-TARGET="${CMPUNLOCKER_TARGET:-unlocked_80gb}"
+TARGET="${CMPUNLOCKER_TARGET:-unlocked_40gb}"
 
 # Determine which unlock method to use
 if [ -n "$STAGE" ]; then
@@ -166,14 +166,14 @@ if [ -n "$STAGE" ]; then
             echo
             echo "Unlock complete! All features applied:"
             echo "  • PLM registers opened"
-            echo "  • Memory unlocked to 80GB+"
+            echo "  • Memory unlocked to 40GB (firmware-locked max)"
             echo "  • Compute clock unlocked to 1410+ MHz"
             echo "  • PCIe Gen 2-5 enabled"
             echo "  • NVLink, ECC, ARC features applied"
             echo
             echo "Verify unlock is present:"
             echo "  nvidia-smi --query-gpu=memory.total --format=csv,noheader"
-            echo "  # Expected: '81378 MiB' or similar (80GB+)"
+            echo "  # Expected: '40960 MiB' (40GB, firmware-protected maximum)"
             echo
             echo "  nvidia-smi --query-gpu=clocks.max.sm --format=csv,noheader"
             echo "  # Expected: '1410 MHz' or higher"
@@ -206,11 +206,11 @@ else
     echo "Automatic unlock flow on next boot:"
     echo "  1. gen2.service runs (PCIe Gen 2 unlock)"
     echo "  2. cmpunlocker-stage-marker sets Stage 1 complete"
-    echo "  3. cmpunlocker daemon auto-runs Stage 2 (PLM + 80GB + features)"
+    echo "  3. cmpunlocker daemon auto-runs Stage 2 (PLM + 40GB + features)"
     echo ""
     echo "Monitor daemon: journalctl -u cmpunlocker -f"
     echo "Verify unlock: nvidia-smi --query-gpu=memory.total,clocks.max.sm --format=csv,noheader"
-    echo "Expected: 81378 (80GB) and 1410 (MHz)"
+    echo "Expected: 40960 (40GB, firmware-locked max) and 1410 (MHz)"
     echo
     echo "Optional: Enable PCIe Gen 4 (if motherboard supports it):"
     echo "  sudo ${INSTALL_DIR}/cmpunlocker/scripts/pcie_gen4_unlock.sh"

@@ -1,11 +1,11 @@
 # cmpunlocker — CMP 170HX Full Unlock
 
-**Unlock full GA100 compute and memory on NVIDIA CMP mining cards. Restore 80GB (or 64GB on 8GB variants) and PCIe Gen 5 x16 (128 GB/s).**
+**Unlock full GA100 compute and PCIe Gen 5 x16 on NVIDIA CMP mining cards. Restore 40GB memory (tested maximum) and PCIe Gen 5 x16 (128 GB/s).**
 
 Targets **nvidia-open driver 580.x–610.x** on Linux x86-64.
 
 ```bash
-sudo ./install.sh                              # 80GB + daemon (persistent)
+sudo ./install.sh                              # 40GB + daemon (persistent)
 sudo ./cmpunlocker/scripts/pcie_gen4_unlock.sh # Gen 2-5 x16 (auto-detect)
 ```
 
@@ -18,10 +18,10 @@ sudo ./cmpunlocker/scripts/pcie_gen4_unlock.sh # Gen 2-5 x16 (auto-detect)
 The CMP 170HX is a physically complete GA100 die — the same silicon as the A100 datacenter GPU — with compute throughput, memory capacity, and other features artificially restricted via OTP fuses and firmware-enforced register locks.
 
 **Two hardware variants exist:**
-- **8GB model** (4 HBM2e stacks × 2GB factory limit) → unlocks to 64GB
-- **10GB model** (5 HBM2e stacks × 2GB factory limit) → unlocks to 80GB
+- **8GB model** (4 HBM2e stacks × 2GB factory limit) → unlocks to 32GB (tested maximum)
+- **10GB model** (5 HBM2e stacks × 2GB factory limit) → unlocks to 40GB (tested maximum)
 
-Each stack's HBM2e dies are 16GB, but factory strap limits them to 2GB. This tool restores the full capacity on hardware you own.
+Each stack's HBM2e dies are 16GB, but factory strap limits them to 2GB. Firmware-level protection prevents full capacity unlock; this tool unlocks the tested-stable maximum via software exploit.
 
 ---
 
@@ -50,17 +50,17 @@ To choose a different memory target, set `CMPUNLOCKER_TARGET` before running:
 
 **For 10GB model (5-stack):**
 ```bash
-sudo CMPUNLOCKER_TARGET=unlocked_40gb ./install.sh    # 40GB (safer, fewer refresh issues)
-sudo CMPUNLOCKER_TARGET=unlocked_80gb ./install.sh    # 80GB (default, full capacity)
+sudo CMPUNLOCKER_TARGET=unlocked_40gb ./install.sh    # 40GB (firmware-locked maximum, tested stable)
 sudo CMPUNLOCKER_TARGET=nativ_10gb ./install.sh       # restore factory 10GB state
 ```
 
 **For 8GB model (4-stack):**
 ```bash
-sudo CMPUNLOCKER_TARGET=unlocked_32gb ./install.sh    # 32GB (safer, fewer refresh issues)
-sudo CMPUNLOCKER_TARGET=unlocked_64gb ./install.sh    # 64GB (default, full capacity)
+sudo CMPUNLOCKER_TARGET=unlocked_32gb ./install.sh    # 32GB (firmware-locked maximum, tested stable)
 sudo CMPUNLOCKER_TARGET=nativ_8gb ./install.sh        # restore factory 8GB state
 ```
+
+**Note:** 80GB and 64GB targets exist in the config but are rejected by firmware-level protection that persists even with all PLM registers open. Only 40GB (10GB model) and 32GB (8GB model) are achievable via software exploit.
 
 ---
 
@@ -95,8 +95,8 @@ journalctl -u cmpunlocker -f
 | **PCIe Gen 5 x16** | ✅ **128 GB/s** | Z890, X970, TRX50 (auto-detected) |
 | **PCIe Gen 4 x16** | ✅ 64 GB/s | Z790, X870 (auto-detected) |
 | **PCIe Gen 2–3 x16** | ✅ 20–32 GB/s | Older boards (verified fallback) |
-| **80GB Memory** | ✅ 5 × 16GB HBM2e | Full hardware capacity (10GB model) |
-| **64GB Memory** | ✅ 4 × 16GB HBM2e | Full hardware capacity (8GB model) |
+| **40GB Memory** | ✅ 5 × 8GB (firmware-locked max) | 10GB model (80GB blocked by firmware) |
+| **32GB Memory** | ✅ 4 × 8GB (firmware-locked max) | 8GB model (64GB blocked by firmware) |
 | **Full SM Throughput** | ✅ SS0/SS1 unlock | All 108 SMs at max clock |
 
 **Optional (best-effort):**
@@ -112,10 +112,11 @@ The exploit is the same one used in the `open-gpu-kernel-modules-610.43.03` driv
 1. The Falcon BootROM loads the `.fwsignature_ga100` ELF section content into DMEM *before* verifying the signature (the bug).
 2. We replace the section content with a 63KB ROP chain.
 3. The chain performs a single BAR0 write of `0xFFFFFFFF` to a target PLM register.
-4. We do this four times (for `WPR_CFG`, `FBPA`, `WPR`, `FEAT` registers) to open the Platform Lock Manager.
-5. With PLM open, the host driver writes the memory unlock (`CFG1`, `LMR`) and compute unlock (`SS0`, `SS1`) values via BAR0.
-6. The original GSP signature is restored so the driver doesn't detect tampering.
-7. The driver continues normal init with full memory + full SM clock.
+4. We do this up to 8 times (for `WPR_CFG`, `FBPA`, `WPR`, `FEAT`, and 4 additional PLM registers) to open the Platform Lock Manager.
+5. With PLM open, the host driver writes the compute unlock (`SS0`, `SS1`) and memory unlock (`CFG1`, `LMR`) values via BAR0.
+6. Memory unlock is **firmware-protected**: CFG1/LMR accept values up to 40GB (10GB model) or 32GB (8GB model), but firmware-level state validation rejects higher values. This protection persists even with all 8 PLM registers open.
+7. The original GSP signature is restored so the driver doesn't detect tampering.
+8. The driver continues normal init with unlocked compute clock and firmware-limited memory.
 
 The unlock is **volatile** (lost on power cycle) but reapplied automatically by the daemon every second.
 

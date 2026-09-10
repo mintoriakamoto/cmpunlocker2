@@ -4,11 +4,10 @@ This document explains how to use cmpunlocker's staged unlock approach, which fo
 
 ## Overview
 
-The staged unlock approach reduces risk by breaking the complex unlock process into 3 independent stages, each requiring user verification before proceeding. This allows you to:
+The staged unlock approach reduces risk by breaking the complex unlock process into 2 independent stages, each requiring user verification before proceeding. This allows you to:
 
-1. Test basic BAR0 access (Stage 1)
-2. Open PLM and unlock memory + compute (Stage 2)
-3. Apply optional feature unlocks (Stage 3)
+1. Test basic BAR0 access with PCIe Gen 2 unlock (Stage 1)
+2. Open PLM and unlock memory (40GB max) + compute + features (Stage 2)
 
 Each stage can be resumed independently if interrupted, and you can verify success before proceeding to the next stage.
 
@@ -58,9 +57,10 @@ sudo ./install.sh --stage=2
 
 **What it does:**
 - Reads current stage from state file (must be ≥ 1)
-- Executes ROP exploit to open 4 PLM registers
-- Writes memory unlock (CFG1/LMR) for 80GB capacity
+- Executes ROP exploit to open all 8 PLM registers
+- Writes memory unlock (CFG1/LMR) for 40GB (firmware-locked maximum)
 - Writes compute unlock (SS0/SS1) for SM clock
+- Applies PCIe Gen 3-5 and feature unlocks
 - Restores original GSP signature (preserves driver integrity)
 - Reloads driver with unlocked state in place
 - Saves state to stage 2
@@ -72,33 +72,10 @@ sudo shutdown -h now
 
 # After reboot, verify unlock is present
 nvidia-smi --query-gpu=memory.total --format=csv,noheader
-# Expected: ~81378 MiB (80GB+)
+# Expected: ~40960 MiB (40GB, firmware-locked maximum)
 
 nvidia-smi --query-gpu=clocks.max.sm --format=csv,noheader
 # Expected: 1410 MHz or higher
-```
-
-### Stage 3: Feature Unlocks (Low Risk, Optional)
-
-```bash
-sudo ./install.sh --stage=3
-```
-
-**What it does:**
-- Reads current stage from state file (must be ≥ 2)
-- Writes Gen 3-5 PCIe speeds to XVE register
-- Applies NVLink, ECC, ARC, and other features
-- Marks stage 3 complete
-- Best-effort, failures don't block
-
-**After Stage 3:**
-```bash
-# No reboot required for stage 3
-# Verify features are in place
-nvidia-smi --query-gpu=clocks.max.sm,memory.total --format=csv,noheader
-
-# Optional: Link retraining for PCIe Gen 4
-sudo ./cmpunlocker/scripts/pcie_gen4_unlock.sh
 ```
 
 ## Full Unlock (All Stages at Once)
@@ -118,11 +95,10 @@ The current unlock stage is stored in:
 /var/lib/cmpunlocker/stage_0000:XX:YY.Z
 ```
 
-This file contains a single integer (0-3):
+This file contains a single integer (0-2):
 - **0** = No unlock applied
 - **1** = Stage 1 complete (Gen 2)
-- **2** = Stage 2 complete (80GB + clock)
-- **3** = Stage 3 complete (features)
+- **2** = Stage 2 complete (40GB + compute + features)
 
 The state persists across reboots and script crashes, allowing resumption at any point.
 
@@ -147,8 +123,8 @@ sudo ./install.sh --stage=2
 
 The systemd daemon (cmpunlocker.service) respects the staged unlock process:
 
-- **During staged unlock (stage < 3):** Daemon logs warnings and skips auto-reapply
-- **After completion (stage = 3):** Daemon monitors GPU state and automatically reapplies unlocks if lost (e.g., driver reload, power fluctuations)
+- **During staged unlock (stage < 2):** Daemon logs warnings and skips auto-reapply
+- **After completion (stage = 2):** Daemon monitors GPU state and automatically reapplies unlocks if lost (e.g., driver reload, power fluctuations)
 
 No manual interaction with the daemon is needed; it automatically adapts to the unlock stage.
 
