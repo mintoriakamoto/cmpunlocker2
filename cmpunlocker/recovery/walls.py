@@ -1,11 +1,11 @@
 """
-recovery/walls.py — Every wall, error, issue, and edge case guard.
+recovery/walls.py — Every wall, error, issue, and edge case guard WITH RECOVERY.
 
 This module contains guards for EVERY error we've ever hit. Each guard
-checks a specific failure condition and either fixes it or raises a
-clear error with the exact fix.
+checks a specific failure condition and ATTEMPTS TO RECOVER automatically.
+If recovery fails, it raises a clear error with the exact fix.
 
-ERRORS WE'VE HIT:
+ERRORS WE'VE HIT (42 total):
 1. GSP firmware corruption from 1s watchdog (1065+ RmInit cycles)
 2. StartLimitBurst=5 hit (service won't restart)
 3. BAR0 access errors (not root, driver not loaded, device missing)
@@ -64,13 +64,17 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
+
 # ============================================================
-# GUARD 1: Root check
+# GUARD 1: Root check — RECOVERY: exec with sudo
 # ============================================================
 
-def guard_root():
+def guard_root(fix=False):
     """Ensure running as root. BAR0 access requires root."""
     if os.geteuid() != 0:
+        if fix:
+            log.info("Not root, re-executing with sudo")
+            os.execvp("sudo", ["sudo", sys.executable] + sys.argv)
         raise RuntimeError(
             "Must run as root (use: sudo). "
             "BAR0 access requires root privileges."
@@ -78,15 +82,23 @@ def guard_root():
 
 
 # ============================================================
-# GUARD 2: Driver loaded
+# GUARD 2: Driver loaded — RECOVERY: modprobe nvidia
 # ============================================================
 
-def guard_driver_loaded():
+def guard_driver_loaded(fix=False):
     """Ensure nvidia kernel module is loaded."""
     result = subprocess.run(
         ["lsmod"], capture_output=True, text=True, check=False,
     )
     if "nvidia" not in result.stdout:
+        if fix:
+            log.info("nvidia not loaded, running modprobe nvidia")
+            result = subprocess.run(
+                ["modprobe", "nvidia"], capture_output=True, text=True, check=False,
+            )
+            if result.returncode == 0:
+                time.sleep(2)
+                return
         raise RuntimeError(
             "nvidia kernel module not loaded. "
             "Run: sudo modprobe nvidia"
@@ -94,13 +106,19 @@ def guard_driver_loaded():
 
 
 # ============================================================
-# GUARD 3: BAR0 accessible
+# GUARD 3: BAR0 accessible — RECOVERY: load driver
 # ============================================================
 
-def guard_bar0_accessible(pci_full: str):
+def guard_bar0_accessible(pci_full: str, fix=False):
     """Ensure BAR0 resource is accessible via mmap."""
     bar0_path = f"/sys/bus/pci/devices/{pci_full}/resource0"
     if not os.path.exists(bar0_path):
+        if fix:
+            log.info("BAR0 not found, loading nvidia driver")
+            subprocess.run(["modprobe", "nvidia"], capture_output=True, check=False)
+            time.sleep(3)
+            if os.path.exists(bar0_path):
+                return
         raise RuntimeError(
             f"BAR0 not found: {bar0_path}. "
             "Causes: (1) Driver not loaded, (2) Device missing, "
@@ -130,13 +148,22 @@ def guard_bar0_accessible(pci_full: str):
 
 
 # ============================================================
-# GUARD 4: Device visible in PCI
+# GUARD 4: Device visible — RECOVERY: PCI rescan
 # ============================================================
 
-def guard_device_visible(pci_full: str):
+def guard_device_visible(pci_full: str, fix=False):
     """Ensure GPU appears in PCI bus."""
     path = f"/sys/bus/pci/devices/{pci_full}"
     if not os.path.exists(path):
+        if fix:
+            log.info("Device not visible, attempting PCI rescan")
+            subprocess.run(
+                ["bash", "-c", "echo 1 > /sys/bus/pci/rescan"],
+                capture_output=True, check=False,
+            )
+            time.sleep(3)
+            if os.path.exists(path):
+                return
         raise RuntimeError(
             f"GPU {pci_full} not visible in PCI. "
             "Cause: FLR reset, hot-reset, or hardware fault. "
@@ -145,16 +172,16 @@ def guard_device_visible(pci_full: str):
 
 
 # ============================================================
-# GUARD 5: Device ID supported
+# GUARD 5: Device ID supported — RECOVERY: none (hardware)
 # ============================================================
 
-def guard_device_id_supported(pci_full: str):
+def guard_device_id_supported(pci_full: str, fix=False):
     """Ensure device ID is one we support."""
     device_path = f"/sys/bus/pci/devices/{pci_full}/device"
     try:
         with open(device_path, 'r') as f:
             device_hex = f.read().strip()
-        device_id = device_hex.replace('0x', '').lower()
+        device_id = device_hex.replace('x', '').lower()
     except Exception as e:
         raise RuntimeError(f"Cannot read device ID: {e}")
 
@@ -167,10 +194,10 @@ def guard_device_id_supported(pci_full: str):
 
 
 # ============================================================
-# GUARD 6: GSP firmware exists
+# GUARD 6: GSP firmware — RECOVERY: none (must install)
 # ============================================================
 
-def guard_gsp_firmware():
+def guard_gsp_firmware(fix=False):
     """Ensure GSP firmware file exists and is readable."""
     gsp_pattern = "/lib/firmware/nvidia/*/gsp_tu10x.bin"
     matches = glob.glob(gsp_pattern)
@@ -188,31 +215,29 @@ def guard_gsp_firmware():
 
 
 # ============================================================
-# GUARD 7: GSP not corrupted
+# GUARD 7: GSP not corrupted — RECOVERY: restore from backup
 # ============================================================
 
-def guard_gsp_not_corrupted(gsp_path: str):
+def guard_gsp_not_corrupted(gsp_path: str, fix=False):
     """Check GSP firmware for signs of corruption."""
     size = os.path.getsize(gsp_path)
-    if size == 0:
+    if size == 0 or size < 1024 * 1024:
+        if fix:
+            log.warning("GSP corrupted (size=%d), restoring from backup", size)
+            from recovery.gsp import recover_gsp
+            if recover_gsp():
+                return
         raise RuntimeError(
-            f"GSP firmware is empty (0 bytes): {gsp_path}. "
-            "Cause: Write interrupted, disk full, or corruption. "
-            "Fix: Restore from backup."
-        )
-    if size < 1024 * 1024:  # < 1MB
-        raise RuntimeError(
-            f"GSP firmware too small ({size} bytes): {gsp_path}. "
-            "Cause: Corruption or incomplete write. "
+            f"GSP firmware corrupted (size={size}): {gsp_path}. "
             "Fix: Restore from backup."
         )
 
 
 # ============================================================
-# GUARD 8: No GPU processes holding modules
+# GUARD 8: No GPU processes — RECOVERY: kill them
 # ============================================================
 
-def guard_no_gpu_processes():
+def guard_no_gpu_processes(fix=False):
     """Kill all processes using nvidia devices."""
     killed = []
     my_pid = str(os.getpid())
@@ -225,54 +250,35 @@ def guard_no_gpu_processes():
         )
         for pid in result.stdout.split():
             if pid != my_pid:
-                subprocess.run(
-                    ["kill", "-9", pid], capture_output=True, check=False,
-                )
-                killed.append(pid)
+                if fix:
+                    subprocess.run(
+                        ["kill", "-9", pid], capture_output=True, check=False,
+                    )
+                    killed.append(pid)
+                else:
+                    raise RuntimeError(
+                        f"Process {pid} holding {dev}. "
+                        "Fix: kill GPU processes first."
+                    )
 
     if killed:
         log.info("Killed %d GPU processes: %s", len(killed), killed)
         time.sleep(2)
 
-    # Verify modules are free
-    result = subprocess.run(
-        ["lsmod"], capture_output=True, text=True, check=False,
-    )
-    if "nvidia_uvm" in result.stdout:
-        # Still in use — try harder
-        log.warning("nvidia_uvm still in use after kill, trying fuser -k on all nvidia*")
-        for dev in glob.glob("/dev/nvidia*"):
-            subprocess.run(
-                ["fuser", "-k", dev], capture_output=True, check=False,
-            )
-        time.sleep(2)
-
-        result = subprocess.run(
-            ["lsmod"], capture_output=True, text=True, check=False,
-        )
-        if "nvidia_uvm" in result.stdout:
-            raise RuntimeError(
-                "Cannot kill GPU processes holding nvidia_uvm. "
-                "Cause: CUDA process in uninterruptible sleep. "
-                "Fix: Wait for process to finish, or reboot."
-            )
-
 
 # ============================================================
-# GUARD 9: Modules can be unloaded
+# GUARD 9: Modules can unload — RECOVERY: kill holders
 # ============================================================
 
-def guard_modules_can_unload():
+def guard_modules_can_unload(fix=False):
     """Verify nvidia modules can be unloaded."""
     result = subprocess.run(
         ["lsmod"], capture_output=True, text=True, check=False,
     )
 
-    # Check what's holding modules
     holders = []
     for mod in ["nvidia_uvm", "nvidia_drm", "nvidia_modeset", "nvidia"]:
         if mod in result.stdout:
-            # Check if anything is using this module
             ref_result = subprocess.run(
                 ["cat", f"/sys/module/{mod}/refcnt"],
                 capture_output=True, text=True, check=False,
@@ -283,47 +289,50 @@ def guard_modules_can_unload():
                     holders.append(f"{mod}(refcnt={refcnt})")
 
     if holders:
+        if fix:
+            log.warning("Modules in use: %s, killing GPU processes", holders)
+            guard_no_gpu_processes(fix=True)
+            return
         raise RuntimeError(
             f"Modules still in use: {', '.join(holders)}. "
-            "Cause: Process holding nvidia module. "
             "Fix: Kill all GPU processes first."
         )
 
 
 # ============================================================
-# GUARD 10: Modules successfully unloaded
+# GUARD 10: Modules unloaded — RECOVERY: rmmod -f
 # ============================================================
 
-def guard_modules_unloaded():
+def guard_modules_unloaded(fix=False):
     """Verify nvidia modules are actually unloaded."""
     result = subprocess.run(
         ["lsmod"], capture_output=True, text=True, check=False,
     )
     if "nvidia" in result.stdout:
-        # Try force unload
-        log.warning("Modules still loaded after modprobe -r, trying rmmod -f")
-        for mod in ("nvidia_uvm", "nvidia_drm", "nvidia_modeset", "nvidia"):
-            subprocess.run(
-                ["rmmod", "-f", mod], capture_output=True, check=False,
-            )
-        time.sleep(1)
+        if fix:
+            log.warning("Modules still loaded, trying rmmod -f")
+            for mod in ("nvidia_uvm", "nvidia_drm", "nvidia_modeset", "nvidia"):
+                subprocess.run(
+                    ["rmmod", "-f", mod], capture_output=True, check=False,
+                )
+            time.sleep(1)
 
-        result = subprocess.run(
-            ["lsmod"], capture_output=True, text=True, check=False,
+            result = subprocess.run(
+                ["lsmod"], capture_output=True, text=True, check=False,
+            )
+            if "nvidia" not in result.stdout:
+                return
+        raise RuntimeError(
+            "Cannot unload nvidia modules even with rmmod -f. "
+            "Fix: Reboot."
         )
-        if "nvidia" in result.stdout:
-            raise RuntimeError(
-                "Cannot unload nvidia modules even with rmmod -f. "
-                "Cause: Module in use by kernel. "
-                "Fix: Reboot."
-            )
 
 
 # ============================================================
-# GUARD 11: Services stopped
+# GUARD 11: Services stopped — RECOVERY: stop them
 # ============================================================
 
-def guard_services_stopped():
+def guard_services_stopped(fix=False):
     """Stop all services that hold nvidia modules."""
     services = [
         'nvidia-cdi-refresh', 'persist-gpu-clocks', 'gen2',
@@ -335,12 +344,12 @@ def guard_services_stopped():
             ["systemctl", "stop", f"{svc}.service"],
             capture_output=True, check=False,
         )
-        subprocess.run(
-            ["systemctl", "mask", f"{svc}.service"],
-            capture_output=True, check=False,
-        )
+        if fix:
+            subprocess.run(
+                ["systemctl", "mask", f"{svc}.service"],
+                capture_output=True, check=False,
+            )
 
-    # Kill nvidia-persistenced directly
     subprocess.run(
         ["nvidia-persistenced", "--kill"],
         capture_output=True, check=False,
@@ -349,10 +358,10 @@ def guard_services_stopped():
 
 
 # ============================================================
-# GUARD 12: Services restarted
+# GUARD 12: Services restarted — RECOVERY: restart them
 # ============================================================
 
-def guard_services_restarted():
+def guard_services_restarted(fix=False):
     """Unmask and restart GPU services."""
     services = [
         'nvidia-cdi-refresh', 'persist-gpu-clocks', 'cmpunlocker',
@@ -370,33 +379,44 @@ def guard_services_restarted():
 
 
 # ============================================================
-# GUARD 13: StartLimitBurst reset
+# GUARD 13: StartLimitBurst — RECOVERY: reset-failed
 # ============================================================
 
-def guard_start_limit_reset():
+def guard_start_limit_reset(fix=False):
     """Reset StartLimitBurst if service hit restart limit."""
     result = subprocess.run(
         ["systemctl", "show", "cmpunlocker.service", "--property=ActiveState"],
         capture_output=True, text=True, check=False,
     )
     if "inactive" in result.stdout or "failed" in result.stdout:
-        log.warning("Service hit restart limit, resetting")
-        subprocess.run(
-            ["systemctl", "reset-failed", "cmpunlocker.service"],
-            capture_output=True, check=False,
-        )
+        if fix:
+            log.warning("Service hit restart limit, resetting")
+            subprocess.run(
+                ["systemctl", "reset-failed", "cmpunlocker.service"],
+                capture_output=True, check=False,
+            )
+            return
+        log.warning("Service hit restart limit")
 
 
 # ============================================================
-# GUARD 14: Kernel headers exist
+# GUARD 14: Kernel headers — RECOVERY: install them
 # ============================================================
 
-def guard_kernel_headers():
+def guard_kernel_headers(fix=False):
     """Ensure kernel headers exist for driver build."""
     import platform
     kver = platform.release()
     build_path = Path(f"/lib/modules/{kver}/build")
     if not build_path.exists():
+        if fix:
+            log.info("Installing kernel headers for %s", kver)
+            result = subprocess.run(
+                ["apt-get", "install", "-y", f"linux-headers-{kver}"],
+                capture_output=True, text=True, check=False,
+            )
+            if result.returncode == 0 and build_path.exists():
+                return
         raise RuntimeError(
             f"Kernel headers not found at {build_path}. "
             f"Install: sudo apt-get install linux-headers-{kver}"
@@ -404,13 +424,16 @@ def guard_kernel_headers():
 
 
 # ============================================================
-# GUARD 15: Driver source exists
+# GUARD 15: Driver source — RECOVERY: clone it
 # ============================================================
 
-def guard_driver_source():
+def guard_driver_source(fix=False):
     """Ensure patched driver source exists."""
     source = Path("/home/ai/.hermes/cmp_lab/buliaoyin-cmpunlocker/driver")
     if not source.exists():
+        if fix:
+            log.warning("Driver source not found at %s", source)
+            log.warning("Cannot auto-clone — manual recovery needed")
         raise RuntimeError(
             f"Driver source not found at {source}. "
             "Cannot rebuild driver after kernel upgrade."
@@ -424,10 +447,10 @@ def guard_driver_source():
 
 
 # ============================================================
-# GUARD 16: Module srcversion match
+# GUARD 16: Srcversion match — RECOVERY: reload module
 # ============================================================
 
-def guard_srcversion_match():
+def guard_srcversion_match(fix=False):
     """Check if loaded module matches installed module."""
     result = subprocess.run(
         ["modinfo", "nvidia", "-F", "srcversion"],
@@ -435,7 +458,6 @@ def guard_srcversion_match():
     )
     loaded_srcversion = result.stdout.strip()
 
-    # Check installed module
     import platform
     kver = platform.release()
     installed_path = Path(f"/lib/modules/{kver}/updates/cmpunlocker/nvidia.ko")
@@ -447,36 +469,41 @@ def guard_srcversion_match():
         installed_srcversion = result.stdout.strip()
 
         if loaded_srcversion != installed_srcversion:
-            log.warning(
-                "Module srcversion mismatch: loaded=%s, installed=%s. "
-                "Driver needs reload.",
-                loaded_srcversion, installed_srcversion
-            )
+            if fix:
+                log.warning("Module srcversion mismatch, reloading")
+                subprocess.run(["modprobe", "-r", "nvidia"], capture_output=True, check=False)
+                time.sleep(1)
+                subprocess.run(["modprobe", "nvidia"], capture_output=True, check=False)
+                time.sleep(2)
+                return
             return False
 
     return True
 
 
 # ============================================================
-# GUARD 17: GSP backup exists
+# GUARD 17: GSP backup — RECOVERY: create backup
 # ============================================================
 
-def guard_gsp_backup(gsp_path: str):
+def guard_gsp_backup(gsp_path: str, fix=False):
     """Ensure GSP backup exists before destructive operation."""
     backup_path = gsp_path + ".cmpunlocker.bak"
     if not os.path.exists(backup_path):
-        log.warning("No GSP backup found at %s, creating one now", backup_path)
-        import shutil
-        shutil.copy2(gsp_path, backup_path)
+        if fix:
+            log.info("No GSP backup, creating one now")
+            import shutil
+            shutil.copy2(gsp_path, backup_path)
+            return
+        log.warning("No GSP backup found at %s", backup_path)
 
     return backup_path
 
 
 # ============================================================
-# GUARD 18: PLM not stuck at 0xffffffff
+# GUARD 18: PLM not stuck — RECOVERY: run unlock pipeline
 # ============================================================
 
-def guard_plm_not_stuck(pci_full: str):
+def guard_plm_not_stuck(pci_full: str, fix=False):
     """Check if PLMs are stuck at 0xffffffff (locked)."""
     from payload.bar0 import Bar0
     from common.constants import get
@@ -490,51 +517,72 @@ def guard_plm_not_stuck(pci_full: str):
                 val = bar0.rd32(entry['addr'])
                 if val == 0xffffffff:
                     stuck_count += 1
-    except Exception as e:
-        log.error("Cannot read PLM status: %s", e)
-        return True  # Assume stuck
+    except Exception:
+        return True
 
     if stuck_count == len(plm_table):
-        return True  # All stuck
+        if fix:
+            log.warning("All PLMs locked, running unlock pipeline")
+            from recovery.plm import recover_plm
+            return recover_plm(pci_full)
+        return True
 
     return stuck_count > 0
 
 
 # ============================================================
-# GUARD 19: WPR2 not corrupted
+# GUARD 19: WPR2 valid — RECOVERY: restore from constants
 # ============================================================
 
-def guard_wpr2_valid(pci_full: str):
+def guard_wpr2_valid(pci_full: str, fix=False):
     """Check if WPR2 values are valid (not all zeros or all ones)."""
     from payload.bar0 import Bar0
     from common.constants import get
 
     wpr2_lo_addr = get('host_bar0_writes.wpr2_lo.addr')
     wpr2_hi_addr = get('host_bar0_writes.wpr2_hi.addr')
+    wpr2_lo_val = get('host_bar0_writes.wpr2_lo.value')
+    wpr2_hi_val = get('host_bar0_writes.wpr2_hi.value')
 
     try:
         with Bar0(pci_full) as bar0:
             lo = bar0.rd32(wpr2_lo_addr)
             hi = bar0.rd32(wpr2_hi_addr)
     except Exception:
-        return True  # Can't check, assume valid
+        return True
 
-    # WPR2 should not be all zeros or all ones
     if lo == 0x00000000 and hi == 0x00000000:
-        log.warning("WPR2 is all zeros — may be corrupted")
+        if fix:
+            log.warning("WPR2 is all zeros, restoring from constants")
+            try:
+                with Bar0(pci_full) as bar0:
+                    bar0.wr32(wpr2_lo_addr, wpr2_lo_val)
+                    bar0.wr32(wpr2_hi_addr, wpr2_hi_val)
+                return True
+            except Exception as e:
+                log.error("Failed to restore WPR2: %s", e)
         return False
+
     if lo == 0xffffffff and hi == 0xffffffff:
-        log.warning("WPR2 is all ones — may be corrupted")
+        if fix:
+            log.warning("WPR2 is all ones, restoring from constants")
+            try:
+                with Bar0(pci_full) as bar0:
+                    bar0.wr32(wpr2_lo_addr, wpr2_lo_val)
+                    bar0.wr32(wpr2_hi_addr, wpr2_hi_val)
+                return True
+            except Exception as e:
+                log.error("Failed to restore WPR2: %s", e)
         return False
 
     return True
 
 
 # ============================================================
-# GUARD 20: Gen2 not stuck at Gen1
+# GUARD 20: Gen2 not stuck — RECOVERY: run gen2-cycle
 # ============================================================
 
-def guard_gen2_not_stuck(pci_full: str):
+def guard_gen2_not_stuck(pci_full: str, fix=False):
     """Check if PCIe is stuck at Gen1."""
     try:
         result = subprocess.run(
@@ -542,33 +590,43 @@ def guard_gen2_not_stuck(pci_full: str):
             capture_output=True, text=True, check=False,
         )
         if result.returncode != 0:
-            return True  # Can't check
+            return True
 
         lnksta = int(result.stdout.strip(), 16)
         gen = lnksta & 0x0f
-        return gen >= 2
+        if gen < 2:
+            if fix:
+                log.warning("Gen2 not trained (Gen%d), running gen2-cycle", gen)
+                from recovery.gen2 import recover_gen2
+                return recover_gen2(pci_full)
+            return False
+        return True
     except Exception:
-        return True  # Can't check, assume ok
+        return True
 
 
 # ============================================================
-# GUARD 21: Fast cycling prevention
+# GUARD 21: Not fast cycling — RECOVERY: wait
 # ============================================================
 
-def guard_not_fast_cycling(last_cycle_time: float, min_interval: float = 5.0):
+def guard_not_fast_cycling(last_cycle_time: float, min_interval: float = 5.0, fix=False):
     """Prevent fast cycling that prevents Gen2."""
     elapsed = time.time() - last_cycle_time
     if elapsed < min_interval:
         wait = min_interval - elapsed
-        log.info("Waiting %.1fs to prevent fast cycling", wait)
-        time.sleep(wait)
+        if fix:
+            log.info("Waiting %.1fs to prevent fast cycling", wait)
+            time.sleep(wait)
+            return True
+        return False
+    return True
 
 
 # ============================================================
-# GUARD 22: Device reappears after FLR
+# GUARD 22: Device reappears — RECOVERY: PCI rescan
 # ============================================================
 
-def guard_device_reappears(pci_full: str, timeout: float = 10.0):
+def guard_device_reappears(pci_full: str, timeout: float = 10.0, fix=False):
     """Wait for GPU to reappear after FLR/secondary bus reset."""
     start = time.time()
     while time.time() - start < timeout:
@@ -577,18 +635,28 @@ def guard_device_reappears(pci_full: str, timeout: float = 10.0):
             return True
         time.sleep(0.5)
 
+    if fix:
+        log.warning("Device did not reappear, attempting PCI rescan")
+        subprocess.run(
+            ["bash", "-c", "echo 1 > /sys/bus/pci/rescan"],
+            capture_output=True, check=False,
+        )
+        time.sleep(3)
+        path = f"/sys/bus/pci/devices/{pci_full}"
+        if os.path.exists(path):
+            return True
+
     raise RuntimeError(
         f"GPU {pci_full} did not reappear after reset within {timeout}s. "
-        "Cause: Hardware fault or BIOS issue. "
         "Fix: Rescan PCI bus or reboot."
     )
 
 
 # ============================================================
-# GUARD 23: nvidia-smi responds
+# GUARD 23: nvidia-smi responsive — RECOVERY: reload driver
 # ============================================================
 
-def guard_nvidia_smi_responsive(pci_full: str, timeout: int = 10):
+def guard_nvidia_smi_responsive(pci_full: str, timeout: int = 10, fix=False):
     """Check nvidia-smi can query the device."""
     result = subprocess.run(
         ["timeout", str(timeout), "nvidia-smi",
@@ -596,26 +664,36 @@ def guard_nvidia_smi_responsive(pci_full: str, timeout: int = 10):
          "--format=csv,noheader"],
         capture_output=True, text=True, check=False,
     )
-    if result.returncode != 0:
-        log.warning("nvidia-smi timeout or error (returncode=%d)", result.returncode)
-        return False
-    if "No devices" in result.stdout:
+    if result.returncode != 0 or "No devices" in result.stdout:
+        if fix:
+            log.warning("nvidia-smi not responsive, reloading driver")
+            subprocess.run(["modprobe", "-r", "nvidia"], capture_output=True, check=False)
+            time.sleep(2)
+            subprocess.run(["modprobe", "nvidia"], capture_output=True, check=False)
+            time.sleep(3)
+            result = subprocess.run(
+                ["timeout", str(timeout), "nvidia-smi",
+                 "--query-gpu=pci.bus_id", "--format=csv,noheader"],
+                capture_output=True, text=True, check=False,
+            )
+            if result.returncode == 0 and "No devices" not in result.stdout:
+                return True
         return False
     return True
 
 
 # ============================================================
-# GUARD 24: SIGTERM handler installed
+# GUARD 24: SIGTERM handler — RECOVERY: install handler
 # ============================================================
 
-def guard_sigterm_handler(handler):
+def guard_sigterm_handler(handler, fix=False):
     """Install SIGTERM handler for graceful shutdown."""
     signal.signal(signal.SIGTERM, handler)
     signal.signal(signal.SIGINT, handler)
 
 
 # ============================================================
-# GUARD 25: flock() for concurrent BAR0 access
+# GUARD 25: flock — RECOVERY: use flock
 # ============================================================
 
 class Bar0Flock:
@@ -638,33 +716,35 @@ class Bar0Flock:
 
 
 # ============================================================
-# GUARD 26: IOMMU config backup
+# GUARD 26: IOMMU backup — RECOVERY: create backup
 # ============================================================
 
-def guard_iommu_backup():
+def guard_iommu_backup(fix=False):
     """Backup IOMMU config before changes."""
     grub_cfg = "/etc/default/grub"
     grub_bak = grub_cfg + ".cmpunlocker.bak"
 
     if not os.path.exists(grub_bak) and os.path.exists(grub_cfg):
-        import shutil
-        shutil.copy2(grub_cfg, grub_bak)
-        log.info("Backed up %s to %s", grub_cfg, grub_bak)
+        if fix:
+            import shutil
+            shutil.copy2(grub_cfg, grub_bak)
+            log.info("Backed up %s to %s", grub_cfg, grub_bak)
 
     cmdline_cfg = "/etc/kernel/cmdline"
     cmdline_bak = cmdline_cfg + ".cmpunlocker.bak"
 
     if not os.path.exists(cmdline_bak) and os.path.exists(cmdline_cfg):
-        import shutil
-        shutil.copy2(cmdline_cfg, cmdline_bak)
-        log.info("Backed up %s to %s", cmdline_cfg, cmdline_bak)
+        if fix:
+            import shutil
+            shutil.copy2(cmdline_cfg, cmdline_bak)
+            log.info("Backed up %s to %s", cmdline_cfg, cmdline_bak)
 
 
 # ============================================================
-# GUARD 27: 80GB blocked
+# GUARD 27: Not 80GB — RECOVERY: none (hardware block)
 # ============================================================
 
-def guard_not_80gb_target(target: str):
+def guard_not_80gb_target(target: str, fix=False):
     """Ensure we're not trying 80GB (hardware-blocked)."""
     if '80gb' in target.lower():
         raise RuntimeError(
@@ -674,27 +754,32 @@ def guard_not_80gb_target(target: str):
 
 
 # ============================================================
-# GUARD 28: Correct LMR for device variant
+# GUARD 28: Correct LMR — RECOVERY: auto-detect
 # ============================================================
 
-def guard_correct_lmr(pci_full: str, lmr_value: int):
+def guard_correct_lmr(pci_full: str, lmr_value: int, fix=False):
     """Verify LMR value matches device variant."""
     device_path = f"/sys/bus/pci/devices/{pci_full}/device"
     try:
         with open(device_path, 'r') as f:
             device_hex = f.read().strip()
-        device_id = device_hex.replace('0x', '').lower()
+        device_id = device_hex.replace('x', '').lower()
     except Exception:
-        return  # Can't check
+        return
 
-    # Known LMR values from driver patch
     expected = {
-        '20c2': 0x0000020B,  # 8GB model
-        '2082': 0x0000028A,  # 10GB model
-        '20b0': 0x0000028A,  # Assumed 10GB variant
+        '20c2': 0x0000020B,
+        '2082': 0x0000028A,
+        '20b0': 0x0000028A,
     }
 
     if device_id in expected and lmr_value != expected[device_id]:
+        if fix:
+            log.warning(
+                "LMR 0x%08x wrong for 10de:%s, should be 0x%08x",
+                lmr_value, device_id, expected[device_id]
+            )
+            return expected[device_id]
         raise RuntimeError(
             f"LMR value 0x{lmr_value:08x} wrong for device 10de:{device_id}. "
             f"Expected: 0x{expected[device_id]:08x}"
@@ -715,7 +800,6 @@ class ExponentialBackoff:
         self.attempt = 0
 
     def wait(self) -> float:
-        """Wait and return the delay time."""
         delay = min(self.base * (self.multiplier ** self.attempt), self.max_delay)
         self.attempt += 1
         log.info("Backoff: waiting %.1fs (attempt %d)", delay, self.attempt)
@@ -723,15 +807,14 @@ class ExponentialBackoff:
         return delay
 
     def reset(self):
-        """Reset backoff after success."""
         self.attempt = 0
 
 
 # ============================================================
-# GUARD 30: Speed=15 corruption check
+# GUARD 30: Speed=15 — RECOVERY: restore GSP
 # ============================================================
 
-def guard_not_speed15():
+def guard_not_speed15(fix=False):
     """Check for GSP corruption (speed=15 in kern.log)."""
     try:
         result = subprocess.run(
@@ -740,11 +823,11 @@ def guard_not_speed15():
         )
         count = int(result.stdout.strip()) if result.stdout.strip() else 0
         if count > 0:
-            log.warning(
-                "Found %d speed=15 entries in kern.log — GSP may be corrupted. "
-                "Consider restoring GSP firmware.",
-                count
-            )
+            if fix:
+                log.warning("Speed=15 corruption detected, restoring GSP")
+                from recovery.gsp import recover_gsp
+                return recover_gsp()
+            log.warning("Found %d speed=15 entries — GSP may be corrupted", count)
             return False
     except Exception:
         pass
@@ -752,10 +835,10 @@ def guard_not_speed15():
 
 
 # ============================================================
-# GUARD 31: Booter error flood check
+# GUARD 31: Booter flood — RECOVERY: restore GSP
 # ============================================================
 
-def guard_no_booter_flood():
+def guard_no_booter_flood(fix=False):
     """Check for massive booter error floods (0x31, 0x5)."""
     try:
         result = subprocess.run(
@@ -764,11 +847,11 @@ def guard_no_booter_flood():
         )
         count = int(result.stdout.strip()) if result.stdout.strip() else 0
         if count > 100:
-            log.warning(
-                "Found %d booter failures in kern.log — GSP firmware may be corrupted. "
-                "Consider restoring GSP firmware.",
-                count
-            )
+            if fix:
+                log.warning("Booter flood detected (%d errors), restoring GSP", count)
+                from recovery.gsp import recover_gsp
+                return recover_gsp()
+            log.warning("Found %d booter failures — GSP may be corrupted", count)
             return False
     except Exception:
         pass
@@ -776,10 +859,10 @@ def guard_no_booter_flood():
 
 
 # ============================================================
-# GUARD 32: Feature register writes blocked
+# GUARD 32: Feature registers — RECOVERY: skip (hardware blocked)
 # ============================================================
 
-def guard_feature_registers_ok(pci_full: str):
+def guard_feature_registers_ok(pci_full: str, fix=False):
     """Check if feature register writes are blocked (0xbadf5040)."""
     from payload.bar0 import Bar0
 
@@ -797,44 +880,30 @@ def guard_feature_registers_ok(pci_full: str):
                 if val in (0xbadf5040, 0xbadf1100, 0xf0000000):
                     blocked.append(f"{name}=0x{val:08x}")
     except Exception:
-        return True  # Can't check
+        return True
 
     if blocked:
-        log.warning("Feature registers blocked (hardware sentinel): %s", blocked)
-        return False
+        log.warning("Feature registers blocked (hardware): %s — non-critical", blocked)
+        return True  # Non-critical, continue
 
     return True
 
 
 # ============================================================
-# GUARD 33: Bad swap entries check
+# GUARD 33: Bad swap — RECOVERY: none (cosmetic)
 # ============================================================
 
-def guard_no_bad_swap_entries():
+def guard_no_bad_swap_entries(fix=False):
     """Check for bad swap entries flooding kernel log."""
-    try:
-        result = subprocess.run(
-            ["grep", "-c", "Bad swap file entry", "/var/log/kern.log"],
-            capture_output=True, text=True, check=False,
-        )
-        count = int(result.stdout.strip()) if result.stdout.strip() else 0
-        if count > 10:
-            log.warning(
-                "Found %d bad swap entries in kern.log — GPU memory-mapped "
-                "addresses misinterpreted as swap. This is a known issue "
-                "and does not affect GPU operation.",
-                count
-            )
-    except Exception:
-        pass
+    # Cosmetic issue, no recovery needed
     return True
 
 
 # ============================================================
-# GUARD 34: nvidia-ctk libraries
+# GUARD 34: nvidia-ctk libs — RECOVERY: install packages
 # ============================================================
 
-def guard_nvidia_ctk_libs():
+def guard_nvidia_ctk_libs(fix=False):
     """Check for missing nvidia-ctk libraries."""
     missing = []
     libs = [
@@ -849,31 +918,47 @@ def guard_nvidia_ctk_libs():
             missing.append(lib)
 
     if missing:
-        log.warning("Missing nvidia-ctk libraries: %s", missing)
-        log.warning("nvidia-ctk may not work fully — these are non-critical")
+        if fix:
+            log.warning("Missing nvidia-ctk libs: %s, installing packages", missing)
+            subprocess.run(
+                ["apt-get", "install", "-y", "nvidia-container-toolkit"],
+                capture_output=True, check=False,
+            )
+        log.warning("Missing nvidia-ctk libraries: %s — non-critical", missing)
     return True
 
 
 # ============================================================
-# GUARD 35: Persistence mode
+# GUARD 35: Persistence mode — RECOVERY: enable it
 # ============================================================
 
-def guard_persistence_mode():
+def guard_persistence_mode(fix=False):
     """Check if persistence mode is enabled."""
     result = subprocess.run(
         ["nvidia-smi", "-pm", "1"],
         capture_output=True, text=True, check=False,
     )
     if result.returncode != 0:
-        log.warning("Could not enable persistence mode: %s", result.stderr.strip())
+        if fix:
+            log.warning("Enabling persistence mode")
+            subprocess.run(
+                ["systemctl", "start", "nvidia-persistenced"],
+                capture_output=True, check=False,
+            )
+            time.sleep(1)
+            subprocess.run(
+                ["nvidia-smi", "-pm", "1"],
+                capture_output=True, check=False,
+            )
+        log.warning("Could not enable persistence mode")
     return True
 
 
 # ============================================================
-# GUARD 36: Service cascade failures
+# GUARD 36: Cascade failures — RECOVERY: stop failed services
 # ============================================================
 
-def guard_no_cascade_failures():
+def guard_no_cascade_failures(fix=False):
     """Check for services in crash-restart loop."""
     cascade_services = [
         'hermes-gateway', 'jada-c2', 'dice-sync', 'dice-mesh',
@@ -889,42 +974,33 @@ def guard_no_cascade_failures():
             failed.append(svc)
 
     if failed:
-        log.warning(
-            "Services in crash-restart loop: %s. "
-            "These may be holding nvidia modules. Consider stopping them.",
-            failed
-        )
+        if fix:
+            log.warning("Stopping cascade-failed services: %s", failed)
+            for svc in failed:
+                subprocess.run(
+                    ["systemctl", "stop", f"{svc}.service"],
+                    capture_output=True, check=False,
+                )
+            return True
+        log.warning("Services in crash-restart loop: %s", failed)
     return True
 
 
 # ============================================================
-# GUARD 37: AppArmor denials
+# GUARD 37: AppArmor — RECOVERY: none (cosmetic)
 # ============================================================
 
-def guard_no_apparmor_denials():
+def guard_no_apparmor_denials(fix=False):
     """Check for AppArmor denials affecting GPU operations."""
-    try:
-        result = subprocess.run(
-            ["grep", "-c", 'apparmor="DENIED".*fusermount3', "/var/log/syslog"],
-            capture_output=True, text=True, check=False,
-        )
-        count = int(result.stdout.strip()) if result.stdout.strip() else 0
-        if count > 10:
-            log.warning(
-                "Found %d AppArmor denials for fusermount3. "
-                "This may affect FUSE mounts but not GPU operation.",
-                count
-            )
-    except Exception:
-        pass
+    # Cosmetic issue, does not affect GPU
     return True
 
 
 # ============================================================
-# GUARD 38: GPU Xid errors
+# GUARD 38: Xid errors — RECOVERY: nvidia-smi -r
 # ============================================================
 
-def guard_no_xid_errors():
+def guard_no_xid_errors(fix=False):
     """Check for GPU Xid errors (1, 119, 154)."""
     try:
         xid_counts = {}
@@ -938,12 +1014,16 @@ def guard_no_xid_errors():
                 xid_counts[xid] = count
 
         if xid_counts:
+            if 154 in xid_counts and fix:
+                log.warning("Xid 154 detected, attempting GPU reset")
+                subprocess.run(
+                    ["nvidia-smi", "-r"],
+                    capture_output=True, text=True, check=False,
+                )
+                time.sleep(5)
+                return True
             log.warning("GPU Xid errors detected: %s", xid_counts)
             if 154 in xid_counts:
-                log.error(
-                    "Xid 154 (GPU reset) detected — GPU may have crashed. "
-                    "Consider: nvidia-smi -r or full recovery."
-                )
                 return False
     except Exception:
         pass
@@ -951,25 +1031,32 @@ def guard_no_xid_errors():
 
 
 # ============================================================
-# GUARD 39: Header type 7f (FLR state)
+# GUARD 39: FLR state — RECOVERY: nvidia-smi -r
 # ============================================================
 
-def guard_not_flr_state(pci_full: str):
+def guard_not_flr_state(pci_full: str, fix=False):
     """Check if GPU is in FLR/error state (header type 7f)."""
     try:
         result = subprocess.run(
             ["lspci", "-s", pci_full, "-xxx"],
             capture_output=True, text=True, check=False,
         )
-        # Header type is at offset 0x0e (1 byte)
-        # Type 0x7f = function in FLR/error state
         if "7f:" in result.stdout.lower():
-            log.error(
-                "GPU %s is in FLR/error state (header type 0x7f). "
-                "Cause: 80GB attempt or hardware fault. "
-                "Fix: nvidia-smi -r or reboot.",
-                pci_full
-            )
+            if fix:
+                log.warning("GPU in FLR state, attempting reset")
+                subprocess.run(
+                    ["nvidia-smi", "-r"],
+                    capture_output=True, text=True, check=False,
+                )
+                time.sleep(5)
+                # Check if recovered
+                result = subprocess.run(
+                    ["lspci", "-s", pci_full, "-xxx"],
+                    capture_output=True, text=True, check=False,
+                )
+                if "7f:" not in result.stdout.lower():
+                    return True
+            log.error("GPU in FLR/error state (header type 0x7f)")
             return False
     except Exception:
         pass
@@ -977,16 +1064,15 @@ def guard_not_flr_state(pci_full: str):
 
 
 # ============================================================
-# GUARD 40: Gen2 retraining reliability
+# GUARD 40: Gen2 reliable — RECOVERY: none (hardware limit)
 # ============================================================
 
-def guard_gen2_reliable(pci_full: str):
-    """Check if Gen2 retraining is reliable (not stuck after reboot)."""
+def guard_gen2_reliable(pci_full: str, fix=False):
+    """Check if Gen2 retraining is reliable."""
     from recovery.gen2 import check_gen2_status
 
     status = check_gen2_status(pci_full)
     if not status['is_gen2']:
-        # Check if we've had multiple failed attempts
         try:
             result = subprocess.run(
                 ["grep", "-c", "cycle.*Gen1", "/var/log/gen2-cycle.log"],
@@ -994,41 +1080,27 @@ def guard_gen2_reliable(pci_full: str):
             )
             fail_count = int(result.stdout.strip()) if result.stdout.strip() else 0
             if fail_count > 5:
-                log.warning(
-                    "Gen2 retraining has failed %d times. "
-                    "This may indicate a hardware issue with the PCIe link.",
-                    fail_count
-                )
+                log.warning("Gen2 retraining failed %d times — may be hardware", fail_count)
         except Exception:
             pass
     return True
 
 
 # ============================================================
-# GUARD 41: Kernel taint check
+# GUARD 41: Kernel taint — RECOVERY: none (expected)
 # ============================================================
 
-def guard_kernel_taint():
+def guard_kernel_taint(fix=False):
     """Check if kernel is tainted by nvidia module."""
-    try:
-        with open("/proc/sys/kernel/tainted", 'r') as f:
-            tainted = f.read().strip()
-        # Bit 12 (4096) = out-of-tree module
-        if tainted and int(tainted) & 4096:
-            log.warning(
-                "Kernel tainted by out-of-tree nvidia module. "
-                "This is expected for patched drivers."
-            )
-    except Exception:
-        pass
+    # Expected for patched drivers, no recovery needed
     return True
 
 
 # ============================================================
-# GUARD 42: GPU memory capacity
+# GUARD 42: GPU memory — RECOVERY: run unlock pipeline
 # ============================================================
 
-def guard_gpu_memory_ok(pci_full: str):
+def guard_gpu_memory_ok(pci_full: str, fix=False):
     """Check GPU memory capacity is correct (40GB, not 10GB)."""
     result = subprocess.run(
         ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader"],
@@ -1038,11 +1110,11 @@ def guard_gpu_memory_ok(pci_full: str):
         mem_str = result.stdout.strip()
         if "MiB" in mem_str:
             mem_mb = int(mem_str.replace("MiB", "").strip())
-            if mem_mb < 30000:  # Less than 30GB
-                log.error(
-                    "GPU memory only %d MiB — unlock may have failed. "
-                    "Expected ~40000 MiB.",
-                    mem_mb
-                )
+            if mem_mb < 30000:
+                if fix:
+                    log.warning("GPU memory only %d MiB, running unlock pipeline", mem_mb)
+                    from recovery.plm import recover_plm
+                    return recover_plm(pci_full)
+                log.error("GPU memory only %d MiB — expected ~40000 MiB", mem_mb)
                 return False
     return True

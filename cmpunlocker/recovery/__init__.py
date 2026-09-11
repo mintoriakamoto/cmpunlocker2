@@ -7,7 +7,7 @@ All recovery methods for the CMP 170HX unlock:
 2. Gen2 recovery — retrain PCIe to Gen2 after cold boot
 3. Driver recovery — rebuild driver after kernel upgrade
 4. GSP recovery — restore corrupted GSP firmware
-5. Walls — every error/issue/edge case guard
+5. Walls — every error/issue/edge case guard WITH RECOVERY
 6. Full recovery — orchestrated sequence of all methods
 """
 
@@ -36,6 +36,7 @@ from recovery.walls import (
     guard_no_apparmor_denials, guard_no_xid_errors,
     guard_not_flr_state, guard_gen2_reliable,
     guard_kernel_taint, guard_gpu_memory_ok,
+    guard_iommu_backup,
 )
 from recovery.orchestrator import full_recovery, diagnose
 
@@ -45,7 +46,7 @@ __all__ = [
     'recover_driver', 'check_driver_status',
     'recover_gsp', 'check_gsp_status',
     'full_recovery', 'diagnose',
-    # Wall guards
+    # Wall guards (all have fix=True option for auto-recovery)
     'guard_root', 'guard_driver_loaded', 'guard_bar0_accessible',
     'guard_device_visible', 'guard_device_id_supported',
     'guard_gsp_firmware', 'guard_gsp_not_corrupted',
@@ -66,4 +67,5 @@ __all__ = [
     'guard_no_apparmor_denials', 'guard_no_xid_errors',
     'guard_not_flr_state', 'guard_gen2_reliable',
     'guard_kernel_taint', 'guard_gpu_memory_ok',
+    'guard_iommu_backup',
 ]
