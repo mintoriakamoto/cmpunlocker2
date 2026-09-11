@@ -141,14 +141,29 @@ sudo python3 cmprecover gsp      # Restore GSP firmware
 3. **PLM registers** — locked = no memory/compute unlock
 4. **Gen2 PCIe** — slow link, can be done later
 
-### Manual Recovery
+### Manual Recovery (what we actually used)
+
+The lab tree that recovered this box is **buliaoyin-cmpunlocker**, not a GitHub clone of this repo and not the 80GB experiments.
 
 ```bash
-# If recovery tool unavailable:
 cd /home/ai/.hermes/cmp_lab/buliaoyin-cmpunlocker
 sudo ./install.sh --profile=10gb --no-iommu
-sudo shutdown -h now  # cold boot required
+sudo shutdown -h now   # cold boot required
 ```
+
+That path is this machine only. `cmprecover` above is the in-tree tool.
+
+### Why nvidia-smi may show PCIe Gen 1
+
+On this 170HX the endpoint **LnkCap is 2.5 GT/s only** until the feature unlock + link retrain stick. The CPU bridge can do 32 GT/s; the card is advertising Gen1. `gen2-cycle.service` is **disabled on purpose while TENSELERATE is serving** — that script `rmmod nvidia` and kills anything on `/dev/nvidia*`.
+
+After a cold boot with **no** llama-server:
+
+```bash
+sudo gen2-cycle 2000    # stop GPU users, retrain; usually cycle 1
+```
+
+Stable ceiling we measured: **Gen2 x4**, not Gen4/Gen5. Do not chase 80GB.
 
 ---
 
