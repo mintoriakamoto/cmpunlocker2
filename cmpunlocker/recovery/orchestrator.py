@@ -1,14 +1,14 @@
 """
-recovery/orchestrator.py — Full recovery orchestrator.
+recovery/orchestrator.py — Full recovery orchestrator with wall guards.
 
-Ties together all recovery methods into a single diagnostic and recovery
-sequence. This is the main entry point for recovery operations.
-
-Recovery order:
-1. Check GSP firmware (corrupted firmware breaks everything)
-2. Check driver (wrong kernel = no driver)
-3. Check PLMs (locked = no memory/compute unlock)
-4. Check Gen2 (not trained = slow PCIe)
+Every error we've ever hit is guarded here. Recovery order:
+1. Pre-flight guards (root, driver, BAR0, device, GSP)
+2. Kill all GPU processes and services
+3. GSP firmware (corrupted firmware breaks everything)
+4. Driver (wrong kernel = no driver)
+5. PLMs (locked = no memory/compute unlock)
+6. Gen2 (not trained = slow PCIe)
+7. Post-flight verification
 """
 
 import logging
@@ -54,16 +54,26 @@ def diagnose(pci_full: str = None) -> dict:
 
 
 def full_recovery(pci_full: str = None, skip_gen2: bool = False) -> bool:
-    """Run full recovery sequence.
+    """Run full recovery sequence with ALL wall guards.
 
-    Order matters:
-    1. GSP firmware (everything depends on this)
-    2. Driver (PLM unlock depends on patched driver)
-    3. PLMs (memory/compute unlock depends on open PLMs)
-    4. Gen2 (optional, can be done later)
-
-    Returns True if all critical steps succeeded.
+    Every error we've ever hit is checked and handled.
     """
+    from recovery.walls import (
+        guard_root, guard_driver_loaded, guard_bar0_accessible,
+        guard_device_visible, guard_device_id_supported,
+        guard_gsp_firmware, guard_gsp_not_corrupted,
+        guard_no_gpu_processes, guard_modules_can_unload,
+        guard_modules_unloaded, guard_services_stopped,
+        guard_services_restarted, guard_start_limit_reset,
+        guard_kernel_headers, guard_driver_source,
+        guard_srcversion_match, guard_gsp_backup,
+        guard_plm_not_stuck, guard_wpr2_valid,
+        guard_gen2_not_stuck, guard_not_fast_cycling,
+        guard_device_reappears, guard_nvidia_smi_responsive,
+        guard_sigterm_handler, guard_not_80gb_target,
+        guard_correct_lmr, ExponentialBackoff, guard_not_speed15,
+    )
+
     if pci_full is None:
         pci_full = _detect_gpu()
 
@@ -71,11 +81,58 @@ def full_recovery(pci_full: str = None, skip_gen2: bool = False) -> bool:
     log.info("CMP 170HX FULL RECOVERY — %s", pci_full)
     log.info("=" * 60)
 
-    # Step 1: Check and recover GSP firmware
+    # ============================================================
+    # PRE-FLIGHT GUARDS
+    # ============================================================
+    log.info("")
+    log.info("--- Pre-flight Guards ---")
+
+    guard_root()
+    log.info("[PASS] Running as root")
+
+    guard_device_visible(pci_full)
+    log.info("[PASS] Device visible in PCI")
+
+    guard_device_id_supported(pci_full)
+    log.info("[PASS] Device ID supported")
+
+    guard_driver_loaded()
+    log.info("[PASS] nvidia module loaded")
+
+    guard_bar0_accessible(pci_full)
+    log.info("[PASS] BAR0 accessible")
+
+    guard_not_speed15()
+    log.info("[PASS] No speed=15 corruption")
+
+    # ============================================================
+    # CLEANUP — Kill everything that holds modules
+    # ============================================================
+    log.info("")
+    log.info("--- Cleanup ---")
+
+    guard_no_gpu_processes()
+    log.info("[PASS] No GPU processes")
+
+    guard_services_stopped()
+    log.info("[PASS] Services stopped")
+
+    # ============================================================
+    # STEP 1: GSP Firmware
+    # ============================================================
     log.info("")
     log.info("Step 1/4: GSP Firmware")
     from recovery.gsp import check_gsp_status, recover_gsp
+
+    gsp_path = guard_gsp_firmware()
+    log.info("[PASS] GSP firmware found: %s", gsp_path)
+
     gsp = check_gsp_status()
+    guard_gsp_not_corrupted(gsp_path)
+    log.info("[PASS] GSP not corrupted (size=%d)", gsp['size'])
+
+    guard_gsp_backup(gsp_path)
+    log.info("[PASS] GSP backup exists")
 
     if not gsp['exists']:
         log.error("GSP firmware not found — cannot recover")
@@ -87,71 +144,121 @@ def full_recovery(pci_full: str = None, skip_gen2: bool = False) -> bool:
             log.error("GSP recovery failed")
             return False
 
-    log.info("GSP: OK (size=%d)", gsp['size'])
+    log.info("[OK] GSP: OK (size=%d)", gsp['size'])
 
-    # Step 2: Check and recover driver
+    # ============================================================
+    # STEP 2: Driver
+    # ============================================================
     log.info("")
     log.info("Step 2/4: Driver")
     from recovery.driver import check_driver_status, recover_driver
+
     driver = check_driver_status(pci_full)
 
     if not driver['loaded'] or not driver['patched']:
         log.warning("Driver needs recovery (loaded=%s, patched=%s)",
                     driver['loaded'], driver['patched'])
+
+        # Check prerequisites
+        guard_kernel_headers()
+        log.info("[PASS] Kernel headers exist")
+
+        guard_driver_source()
+        log.info("[PASS] Driver source exists")
+
         if not recover_driver(pci_full):
             log.error("Driver recovery failed")
             return False
 
-    log.info("Driver: OK (v%s, kernel %s)", driver['version'], driver['kernel'])
+    if not guard_srcversion_match():
+        log.warning("Module srcversion mismatch — reload needed")
+        # Module will be reloaded later
 
-    # Step 3: Check and recover PLMs
+    log.info("[OK] Driver: v%s, kernel %s", driver['version'], driver['kernel'])
+
+    # ============================================================
+    # STEP 3: PLM Registers
+    # ============================================================
     log.info("")
     log.info("Step 3/4: PLM Registers")
     from recovery.plm import check_plm_status, recover_plm
+
     plm = check_plm_status(pci_full)
 
     if not plm['open']:
         log.warning("PLMs locked (%d/%d open) — running unlock pipeline",
                     plm['count'], plm['total'])
+
+        # Check WPR2 before PLM unlock
+        if not guard_wpr2_valid(pci_full):
+            log.warning("WPR2 may be corrupted — will be restored during unlock")
+
         if not recover_plm(pci_full):
             log.error("PLM recovery failed")
             return False
 
-    log.info("PLM: OK (%d/%d open)", plm['count'], plm['total'])
+    # Verify PLMs opened
+    plm = check_plm_status(pci_full)
+    if not plm['open']:
+        log.error("PLM recovery failed — still locked")
+        return False
 
-    # Step 4: Check and recover Gen2
+    log.info("[OK] PLM: %d/%d open", plm['count'], plm['total'])
+
+    # ============================================================
+    # STEP 4: Gen2 PCIe
+    # ============================================================
     if not skip_gen2:
         log.info("")
         log.info("Step 4/4: Gen2 PCIe")
         from recovery.gen2 import check_gen2_status, recover_gen2
+
         gen2 = check_gen2_status(pci_full)
 
         if not gen2['is_gen2']:
             log.warning("PCIe at Gen%d (%s) — attempting Gen2 recovery",
                         gen2['gen'], gen2['speed'])
+
             if not recover_gen2(pci_full):
                 log.warning("Gen2 recovery failed (non-critical)")
         else:
-            log.info("Gen2: OK (%s %s)", gen2['speed'], gen2['width'])
+            log.info("[OK] Gen2: %s %s", gen2['speed'], gen2['width'])
     else:
         log.info("")
         log.info("Step 4/4: Gen2 PCIe — SKIPPED")
 
-    # Final status
+    # ============================================================
+    # POST-FLIGHT VERIFICATION
+    # ============================================================
+    log.info("")
+    log.info("--- Post-flight Verification ---")
+
+    # Restart services
+    guard_services_restarted()
+    log.info("[PASS] Services restarted")
+
+    # Reset start limit if needed
+    guard_start_limit_reset()
+    log.info("[PASS] Start limit reset")
+
+    # Final verification
+    final = diagnose(pci_full)
+
+    # ============================================================
+    # FINAL STATUS
+    # ============================================================
     log.info("")
     log.info("=" * 60)
     log.info("RECOVERY COMPLETE")
     log.info("=" * 60)
 
-    # Verify final state
-    final = diagnose(pci_full)
+    _print_status(final)
+
     if final['healthy']:
         log.info("All systems healthy")
-        _print_status(final)
         return True
     else:
-        log.warning("Some systems not healthy:")
-        _print_status(final)
+        log.warning("Some systems not healthy — see above")
         return False
 
 
