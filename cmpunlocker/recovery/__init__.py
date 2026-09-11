@@ -30,6 +30,12 @@ from recovery.walls import (
     guard_sigterm_handler, guard_not_80gb_target,
     guard_correct_lmr, ExponentialBackoff, guard_not_speed15,
     Bar0Flock,
+    guard_no_booter_flood, guard_feature_registers_ok,
+    guard_no_bad_swap_entries, guard_nvidia_ctk_libs,
+    guard_persistence_mode, guard_no_cascade_failures,
+    guard_no_apparmor_denials, guard_no_xid_errors,
+    guard_not_flr_state, guard_gen2_reliable,
+    guard_kernel_taint, guard_gpu_memory_ok,
 )
 from recovery.orchestrator import full_recovery, diagnose
 
@@ -54,4 +60,10 @@ __all__ = [
     'guard_sigterm_handler', 'guard_not_80gb_target',
     'guard_correct_lmr', 'ExponentialBackoff', 'guard_not_speed15',
     'Bar0Flock',
+    'guard_no_booter_flood', 'guard_feature_registers_ok',
+    'guard_no_bad_swap_entries', 'guard_nvidia_ctk_libs',
+    'guard_persistence_mode', 'guard_no_cascade_failures',
+    'guard_no_apparmor_denials', 'guard_no_xid_errors',
+    'guard_not_flr_state', 'guard_gen2_reliable',
+    'guard_kernel_taint', 'guard_gpu_memory_ok',
 ]

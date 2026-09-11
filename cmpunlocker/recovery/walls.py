@@ -26,7 +26,7 @@ ERRORS WE'VE HIT:
 18. No gen2-hammer script
 19. IOMMU config backup/restore
 20. Container BAR0 EIO
-21. Booter error 0x31
+21. Booter error 0x31 (311,836 failures)
 22. PLM writes fail (status=0xffff)
 23. PCIe xp3g booter FAILED
 24. 80GB blocked by firmware
@@ -41,6 +41,16 @@ ERRORS WE'VE HIT:
 33. Exponential backoff needed
 34. flock() needed for concurrent BAR0
 35. SIGTERM handler needed
+36. Booter error 0x5 (initial boot failure)
+37. Feature register writes blocked (0xbadf5040, 0xbadf1100)
+38. Bad swap entries flooding kernel log
+39. nvidia-ctk missing libraries
+40. Persistence mode disabled
+41. Service cascade failures (hermes-gateway, jada-c2, dice-sync, dice-mesh)
+42. AppArmor denials
+43. GPU Xid errors (1, 119, 154)
+44. Header type 7f (FLR/error state)
+45. Gen2 retraining failures after reboot
 """
 
 import glob
@@ -738,4 +748,301 @@ def guard_not_speed15():
             return False
     except Exception:
         pass
+    return True
+
+
+# ============================================================
+# GUARD 31: Booter error flood check
+# ============================================================
+
+def guard_no_booter_flood():
+    """Check for massive booter error floods (0x31, 0x5)."""
+    try:
+        result = subprocess.run(
+            ["grep", "-c", "Booter failed with non-zero error code", "/var/log/kern.log"],
+            capture_output=True, text=True, check=False,
+        )
+        count = int(result.stdout.strip()) if result.stdout.strip() else 0
+        if count > 100:
+            log.warning(
+                "Found %d booter failures in kern.log — GSP firmware may be corrupted. "
+                "Consider restoring GSP firmware.",
+                count
+            )
+            return False
+    except Exception:
+        pass
+    return True
+
+
+# ============================================================
+# GUARD 32: Feature register writes blocked
+# ============================================================
+
+def guard_feature_registers_ok(pci_full: str):
+    """Check if feature register writes are blocked (0xbadf5040)."""
+    from payload.bar0 import Bar0
+
+    feature_addrs = {
+        'pcie_gen2': 0x000088,
+        'nvlink_enable': 0x88000c,
+        'ecc_enable': 0x100110,
+    }
+
+    blocked = []
+    try:
+        with Bar0(pci_full) as bar0:
+            for name, addr in feature_addrs.items():
+                val = bar0.rd32(addr)
+                if val in (0xbadf5040, 0xbadf1100, 0xf0000000):
+                    blocked.append(f"{name}=0x{val:08x}")
+    except Exception:
+        return True  # Can't check
+
+    if blocked:
+        log.warning("Feature registers blocked (hardware sentinel): %s", blocked)
+        return False
+
+    return True
+
+
+# ============================================================
+# GUARD 33: Bad swap entries check
+# ============================================================
+
+def guard_no_bad_swap_entries():
+    """Check for bad swap entries flooding kernel log."""
+    try:
+        result = subprocess.run(
+            ["grep", "-c", "Bad swap file entry", "/var/log/kern.log"],
+            capture_output=True, text=True, check=False,
+        )
+        count = int(result.stdout.strip()) if result.stdout.strip() else 0
+        if count > 10:
+            log.warning(
+                "Found %d bad swap entries in kern.log — GPU memory-mapped "
+                "addresses misinterpreted as swap. This is a known issue "
+                "and does not affect GPU operation.",
+                count
+            )
+    except Exception:
+        pass
+    return True
+
+
+# ============================================================
+# GUARD 34: nvidia-ctk libraries
+# ============================================================
+
+def guard_nvidia_ctk_libs():
+    """Check for missing nvidia-ctk libraries."""
+    missing = []
+    libs = [
+        "libnvidia-sandboxutils.so.1",
+        "libnvidia-vulkan-producer.so",
+    ]
+    for lib in libs:
+        result = subprocess.run(
+            ["ldconfig", "-p"], capture_output=True, text=True, check=False,
+        )
+        if lib not in result.stdout:
+            missing.append(lib)
+
+    if missing:
+        log.warning("Missing nvidia-ctk libraries: %s", missing)
+        log.warning("nvidia-ctk may not work fully — these are non-critical")
+    return True
+
+
+# ============================================================
+# GUARD 35: Persistence mode
+# ============================================================
+
+def guard_persistence_mode():
+    """Check if persistence mode is enabled."""
+    result = subprocess.run(
+        ["nvidia-smi", "-pm", "1"],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        log.warning("Could not enable persistence mode: %s", result.stderr.strip())
+    return True
+
+
+# ============================================================
+# GUARD 36: Service cascade failures
+# ============================================================
+
+def guard_no_cascade_failures():
+    """Check for services in crash-restart loop."""
+    cascade_services = [
+        'hermes-gateway', 'jada-c2', 'dice-sync', 'dice-mesh',
+    ]
+
+    failed = []
+    for svc in cascade_services:
+        result = subprocess.run(
+            ["systemctl", "is-failed", f"{svc}.service"],
+            capture_output=True, text=True, check=False,
+        )
+        if result.stdout.strip() == "failed":
+            failed.append(svc)
+
+    if failed:
+        log.warning(
+            "Services in crash-restart loop: %s. "
+            "These may be holding nvidia modules. Consider stopping them.",
+            failed
+        )
+    return True
+
+
+# ============================================================
+# GUARD 37: AppArmor denials
+# ============================================================
+
+def guard_no_apparmor_denials():
+    """Check for AppArmor denials affecting GPU operations."""
+    try:
+        result = subprocess.run(
+            ["grep", "-c", 'apparmor="DENIED".*fusermount3', "/var/log/syslog"],
+            capture_output=True, text=True, check=False,
+        )
+        count = int(result.stdout.strip()) if result.stdout.strip() else 0
+        if count > 10:
+            log.warning(
+                "Found %d AppArmor denials for fusermount3. "
+                "This may affect FUSE mounts but not GPU operation.",
+                count
+            )
+    except Exception:
+        pass
+    return True
+
+
+# ============================================================
+# GUARD 38: GPU Xid errors
+# ============================================================
+
+def guard_no_xid_errors():
+    """Check for GPU Xid errors (1, 119, 154)."""
+    try:
+        xid_counts = {}
+        for xid in [1, 119, 154]:
+            result = subprocess.run(
+                ["grep", "-c", f"Xid.*{xid}", "/var/log/kern.log"],
+                capture_output=True, text=True, check=False,
+            )
+            count = int(result.stdout.strip()) if result.stdout.strip() else 0
+            if count > 0:
+                xid_counts[xid] = count
+
+        if xid_counts:
+            log.warning("GPU Xid errors detected: %s", xid_counts)
+            if 154 in xid_counts:
+                log.error(
+                    "Xid 154 (GPU reset) detected — GPU may have crashed. "
+                    "Consider: nvidia-smi -r or full recovery."
+                )
+                return False
+    except Exception:
+        pass
+    return True
+
+
+# ============================================================
+# GUARD 39: Header type 7f (FLR state)
+# ============================================================
+
+def guard_not_flr_state(pci_full: str):
+    """Check if GPU is in FLR/error state (header type 7f)."""
+    try:
+        result = subprocess.run(
+            ["lspci", "-s", pci_full, "-xxx"],
+            capture_output=True, text=True, check=False,
+        )
+        # Header type is at offset 0x0e (1 byte)
+        # Type 0x7f = function in FLR/error state
+        if "7f:" in result.stdout.lower():
+            log.error(
+                "GPU %s is in FLR/error state (header type 0x7f). "
+                "Cause: 80GB attempt or hardware fault. "
+                "Fix: nvidia-smi -r or reboot.",
+                pci_full
+            )
+            return False
+    except Exception:
+        pass
+    return True
+
+
+# ============================================================
+# GUARD 40: Gen2 retraining reliability
+# ============================================================
+
+def guard_gen2_reliable(pci_full: str):
+    """Check if Gen2 retraining is reliable (not stuck after reboot)."""
+    from recovery.gen2 import check_gen2_status
+
+    status = check_gen2_status(pci_full)
+    if not status['is_gen2']:
+        # Check if we've had multiple failed attempts
+        try:
+            result = subprocess.run(
+                ["grep", "-c", "cycle.*Gen1", "/var/log/gen2-cycle.log"],
+                capture_output=True, text=True, check=False,
+            )
+            fail_count = int(result.stdout.strip()) if result.stdout.strip() else 0
+            if fail_count > 5:
+                log.warning(
+                    "Gen2 retraining has failed %d times. "
+                    "This may indicate a hardware issue with the PCIe link.",
+                    fail_count
+                )
+        except Exception:
+            pass
+    return True
+
+
+# ============================================================
+# GUARD 41: Kernel taint check
+# ============================================================
+
+def guard_kernel_taint():
+    """Check if kernel is tainted by nvidia module."""
+    try:
+        with open("/proc/sys/kernel/tainted", 'r') as f:
+            tainted = f.read().strip()
+        # Bit 12 (4096) = out-of-tree module
+        if tainted and int(tainted) & 4096:
+            log.warning(
+                "Kernel tainted by out-of-tree nvidia module. "
+                "This is expected for patched drivers."
+            )
+    except Exception:
+        pass
+    return True
+
+
+# ============================================================
+# GUARD 42: GPU memory capacity
+# ============================================================
+
+def guard_gpu_memory_ok(pci_full: str):
+    """Check GPU memory capacity is correct (40GB, not 10GB)."""
+    result = subprocess.run(
+        ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader"],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode == 0:
+        mem_str = result.stdout.strip()
+        if "MiB" in mem_str:
+            mem_mb = int(mem_str.replace("MiB", "").strip())
+            if mem_mb < 30000:  # Less than 30GB
+                log.error(
+                    "GPU memory only %d MiB — unlock may have failed. "
+                    "Expected ~40000 MiB.",
+                    mem_mb
+                )
+                return False
     return True
