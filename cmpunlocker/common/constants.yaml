@@ -107,10 +107,12 @@ feature_unlocks:
   pcie_gen2:
     addr:  0x000088
     value: 0x00000002
-    note: "PCIe Link Control 2 → Gen 2 (5.0 GT/s, verified, Cyridd research)"
-    # Cyridd's research on CMP 40HX shows Gen2 x16 unlock verified working.
-    # Gen 2 is a practical fallback when Gen 4 negotiation fails.
-    # Provides ~5 GT/s bandwidth (2x improvement over factory Gen1).
+    note: "[DEPRECATED] BAR0 write doesn't work — using pcie_gen4_unlock.sh instead"
+    # CRITICAL FIX: The BAR0 write (0x000088 = 0x00000002) DOES NOT WORK.
+    # Pipeline now uses pcie_gen4_unlock.sh which employs setpci (PCI Config Space).
+    # The setpci method is verified working and auto-detects root complex capability,
+    # falling back to Gen2 (5.0 GT/s) when higher speeds aren't supported.
+    # This provides ~5 GT/s bandwidth (2x improvement over factory Gen1 at 2.5 GT/s).
   pcie_gen3:
     addr:  0x000088
     value: 0x00000003

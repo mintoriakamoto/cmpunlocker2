@@ -29,6 +29,7 @@ import glob
 import logging
 import os
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -147,6 +148,53 @@ def _write_bar0(pci_full: str, addr: int, value: int, label: str) -> bool:
     log.warning("[%s] %s write failed (wrote 0x%08x, got 0x%08x)",
                 pci_full, label, value, actual)
     return False
+
+
+def _apply_pcie_gen2_setpci(pci_full: str) -> bool:
+    """Apply PCIe Gen2 unlock via pcie_gen4_unlock.sh (PCI Config Space via setpci).
+
+    The BAR0 write method (0x000088 = 0x00000002) does NOT work.
+    The working method uses setpci to access PCI Config Space registers directly.
+
+    The pcie_gen4_unlock.sh script auto-detects root complex capability and
+    negotiates Gen2-Gen5, falling back to Gen2 if higher speeds aren't supported.
+    """
+    import subprocess
+
+    # Find the script (relative to this file's location)
+    script_dir = Path(__file__).parent.parent / "scripts"
+    script_path = script_dir / "pcie_gen4_unlock.sh"
+
+    if not script_path.exists():
+        log.warning("[%s] pcie_gen4_unlock.sh not found at %s, skipping setpci Gen2",
+                   pci_full, script_path)
+        return False
+
+    try:
+        # Run as root (will prompt for sudo if needed)
+        result = subprocess.run(
+            ["sudo", str(script_path), pci_full],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+
+        if result.returncode == 0:
+            log.info("[%s] pcie_gen4_unlock.sh succeeded", pci_full)
+            log.debug("[%s] Output:\n%s", pci_full, result.stdout)
+            return True
+        else:
+            log.warning("[%s] pcie_gen4_unlock.sh failed (exit %d)",
+                       pci_full, result.returncode)
+            log.debug("[%s] stderr:\n%s", pci_full, result.stderr)
+            return False
+
+    except subprocess.TimeoutExpired:
+        log.error("[%s] pcie_gen4_unlock.sh timed out", pci_full)
+        return False
+    except Exception as e:
+        log.error("[%s] pcie_gen4_unlock.sh error: %s", pci_full, e)
+        return False
 
 
 def run_full_unlock(pci_full: str, gsp_path: str = None,
@@ -347,6 +395,11 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
     feat_results = apply_feature_unlocks(pci_full)
     feat_ok = all(r.get("stuck", False) for r in feat_results.values()) if feat_results else True
 
+    # CRITICAL FIX: BAR0 Gen2 write (0x000088) doesn't work.
+    # Use pcie_gen4_unlock.sh for proper PCI Config Space Gen2 unlock via setpci
+    log.info("[%s] Applying PCIe Gen2 via pcie_gen4_unlock.sh (PCI Config Space)", pci_full)
+    gen2_script_ok = _apply_pcie_gen2_setpci(pci_full)
+
     log.info("[%s] Restoring original GSP signature", pci_full)
     shutil.copy2(backup, gsp_path)
 
@@ -385,12 +438,13 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
         except Exception as e:
             log.warning("[%s] Gen5 BAR0 fallback error: %s", pci_full, e)
 
-    all_ok = cfg1_ok and lmr_ok and ss0_ok and ss1_ok
-    log.info("[%s] Pipeline complete — memory=%s compute=%s features=%s overall=%s",
+    all_ok = cfg1_ok and lmr_ok and ss0_ok and ss1_ok and gen2_ok
+    log.info("[%s] Pipeline complete — memory=%s compute=%s features=%s pcie_gen2=%s overall=%s",
              pci_full,
              "OK" if (cfg1_ok and lmr_ok) else "FAIL",
              "OK" if (ss0_ok and ss1_ok) else "FAIL",
              "OK" if feat_ok else "PARTIAL",
+             "OK" if gen2_ok else "FAIL",
              "OK" if all_ok else "FAIL")
     return all_ok
 
