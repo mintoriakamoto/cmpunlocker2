@@ -1,0 +1,20 @@
+#!/usr/bin/env python3
+"""
+cmprecover — CMP 170HX Recovery Tool
+
+All-in-one recovery for the CMP 170HX unlock.
+
+Usage:
+  cmprecover diagnose              # Run diagnostics
+  cmprecover full                  # Full recovery
+  cmprecover full --skip-gen2      # Full recovery, skip Gen2
+  cmprecover plm                   # PLM recovery only
+  cmprecover gen2                  # Gen2 recovery only
+  cmprecover driver                # Driver rebuild only
+  cmprecover gsp                   # GSP firmware restore only
+"""
+
+from recovery.orchestrator import main
+
+if __name__ == "__main__":
+    main()

@@ -118,9 +118,33 @@ The `gen2-cycle` script stops GPU processes, does a secondary bus reset, and ret
 
 ## Recovery
 
-If the unlock is lost (kernel upgrade, driver rebuild):
+If the unlock is lost (kernel upgrade, driver rebuild), use the built-in recovery tool:
 
 ```bash
+# Full diagnostic
+python3 cmprecover diagnose
+
+# Full recovery (GSP → driver → PLM → Gen2)
+sudo python3 cmprecover full
+
+# Individual recovery
+sudo python3 cmprecover plm      # Re-open PLM registers
+sudo python3 cmprecover gen2     # Retrain Gen2 PCIe
+sudo python3 cmprecover driver   # Rebuild driver
+sudo python3 cmprecover gsp      # Restore GSP firmware
+```
+
+### Recovery Order
+
+1. **GSP firmware** — corrupted firmware breaks everything
+2. **Driver** — kernel upgrade requires rebuild
+3. **PLM registers** — locked = no memory/compute unlock
+4. **Gen2 PCIe** — slow link, can be done later
+
+### Manual Recovery
+
+```bash
+# If recovery tool unavailable:
 cd /home/ai/.hermes/cmp_lab/buliaoyin-cmpunlocker
 sudo ./install.sh --profile=10gb --no-iommu
 sudo shutdown -h now  # cold boot required
