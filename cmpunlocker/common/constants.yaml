@@ -105,34 +105,31 @@ feature_unlocks:
   # COMMUNITY-VERIFIED values (from A100 BAR0 dump analysis, not guesses)
   # ----------------------------------------------------------------------
   pcie_gen2:
-    addr:  0x000088
+    addr:  0x00088088
     value: 0x00000002
-    note: "[DEPRECATED] BAR0 write doesn't work — using pcie_gen4_unlock.sh instead"
-    # CRITICAL FIX: The BAR0 write (0x000088 = 0x00000002) DOES NOT WORK.
-    # Pipeline now uses pcie_gen4_unlock.sh which employs setpci (PCI Config Space).
-    # The setpci method is verified working and auto-detects root complex capability,
-    # falling back to Gen2 (5.0 GT/s) when higher speeds aren't supported.
-    # This provides ~5 GT/s bandwidth (2x improvement over factory Gen1 at 2.5 GT/s).
+    note: "DEPRECATED: BAR0 alone doesn't work (needs 24-reg sequence). Using pcie_gen4_unlock.sh (setpci)"
+    # CRITICAL: BAR0 0x00088088 is correct address BUT still insufficient.
+    # Gen2 requires 24+ register writes in correct sequence (see buliaoyin pcie-gen2.patch).
+    # Pipeline uses pcie_gen4_unlock.sh (PCI Config Space via setpci) — verified working.
+    # However, BR04 bridge may reject Gen2 if BIOS/firmware doesn't support it.
   pcie_gen3:
-    addr:  0x000088
+    addr:  0x00088088
     value: 0x00000003
-    note: "PCIe Link Control 2 → Gen 3 (8.0 GT/s, XVE register)"
-    # Gen 3 support in XVE register space (bits[3:0] = speed: 3=Gen3).
-    # Requires platform support. Use pcie_gen4_unlock.sh for Gen 3+ retraining.
+    note: "DEPRECATED: Correct addr 0x00088088 but needs 24-reg sequence. Use pcie_gen4_unlock.sh"
+    # Gen 3 (8.0 GT/s) requires full driver patch sequence like buliaoyin.
+    # BAR0 address corrected from 0x000088 to 0x00088088 but still incomplete.
   pcie_gen4:
-    addr:  0x000088
+    addr:  0x00088088
     value: 0x00000004
-    note: "PCIe Link Control 2 → Gen 4 (16.0 GT/s, XVE register)"
-    # Gen 4 support in XVE register space (bits[3:0] = speed: 4=Gen4).
-    # Requires Z790/X870 motherboard support + link retraining.
-    # Use pcie_gen4_unlock.sh for proper Gen 4 negotiation.
+    note: "DEPRECATED: Correct addr 0x00088088 but needs 24-reg sequence. Use pcie_gen4_unlock.sh"
+    # Gen 4 (16.0 GT/s) requires full driver patch sequence like buliaoyin.
+    # BAR0 address corrected from 0x000088 to 0x00088088 but still incomplete.
   pcie_gen5:
-    addr:  0x000088
+    addr:  0x00088088
     value: 0x00000005
-    note: "PCIe Link Control 2 → Gen 5 (32.0 GT/s, XVE register)"
-    # Gen 5 support in XVE register space (bits[3:0] = speed: 5=Gen5).
-    # Requires Z890/X970/TRX50 motherboard + platform support.
-    # Use pcie_gen4_unlock.sh for proper Gen 5 negotiation (auto-detects).
+    note: "DEPRECATED: Correct addr 0x00088088 but needs 24-reg sequence. Use pcie_gen4_unlock.sh"
+    # Gen 5 (32.0 GT/s) requires full driver patch sequence like buliaoyin.
+    # BAR0 address corrected from 0x000088 to 0x00088088 but still incomplete.
   nvlink_enable:
     addr:  0x0088000C
     value: 0x00000001
