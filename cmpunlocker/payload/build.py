@@ -136,7 +136,7 @@ if __name__ == "__main__":
     import argparse
     p = argparse.ArgumentParser()
     p.add_argument("--target", default=None,
-                   help="Memory target (nativ_10gb / unlocked_40gb / unlocked_80gb)")
+                   help="Memory target (nativ_10gb / unlocked_40gb)")
     p.add_argument("--out", default=None, help="Output file (default: stdout)")
     args = p.parse_args()
 

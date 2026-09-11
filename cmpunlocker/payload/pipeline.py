@@ -198,14 +198,13 @@ def _apply_pcie_gen2_setpci(pci_full: str) -> bool:
 
 
 def run_full_unlock(pci_full: str, gsp_path: str = None,
-                     target: str = None, gen5: bool = False) -> bool:
+                     target: str = None) -> bool:
     """Run the full unlock pipeline (mirrors modified driver).
 
     Args:
         pci_full: PCI BDF address (e.g. 0000:01:00.0)
         gsp_path: Path to GSP firmware (auto-detected if None)
-        target: Memory target (e.g. 'unlocked_40gb', 'unlocked_80gb')
-        gen5: If True, attempt Gen5 PCIe unlock (research, not stable)
+        target: Memory target (e.g. 'unlocked_40gb')
     """
     # Preflight validation: catch common issues early
     try:
@@ -236,13 +235,8 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
     log.info("[%s] Saving stock GSP signature", pci_full)
     stock_sig = _save_stock_signature(gsp_path)
 
-    # Select PLM table based on target - 40GB and 80GB use DIFFERENT PLM values!
-    if target == 'unlocked_80gb':
-        plm_table = get('plm_table_80gb')
-        log.info("[%s] Using 80GB-specific PLM unlock values (all-1s pattern)", pci_full)
-    else:
-        plm_table = get('plm_table_40gb')
-        log.info("[%s] Using 40GB PLM unlock values", pci_full)
+    plm_table = get('plm_table_40gb')
+    log.info("[%s] Using 40GB PLM unlock values", pci_full)
 
     plm_open_count = 0
 
@@ -298,19 +292,6 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
 
     log.info("[%s] %d of %d PLM registers opened, proceeding to write memory/compute",
              pci_full, plm_open_count, len(plm_table))
-
-    # Gen5 unlock attempt (while PLM is open) — research, not production
-    if gen5:
-        log.info("[%s] Attempting PCIe Gen5 unlock (XVE_OVR @ 0x8872c)", pci_full)
-        try:
-            from unlock.pcie_gen5 import unlock_pcie_gen5
-            pcie_gen5_ok = unlock_pcie_gen5(pci_full)
-            if pcie_gen5_ok:
-                log.info("[%s] Gen5 enabled", pci_full)
-            else:
-                log.warning("[%s] Gen5 write did not stick", pci_full)
-        except Exception as e:
-            log.warning("[%s] Gen5 unlock failed: %s", pci_full, e)
 
     targets = get('memory_unlock.targets')
     mem = targets[target]
@@ -407,37 +388,6 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
     load_module()
     time.sleep(3)
 
-    # Gen5 research: firmware patch + PCI config unlock (not production)
-    if gen5:
-        log.info("[%s] === GEN5 RESEARCH ===", pci_full)
-        try:
-            from payload.firmware_fuse_unlock import unlock_gen5_via_firmware
-            fw_backup = gsp_path + ".gen5"
-            unlock_gen5_via_firmware(backup, fw_backup)
-            shutil.copy2(fw_backup, gsp_path)
-            log.info("[%s] Gen5 firmware patched, reloading...", pci_full)
-            aggressive_unload()
-            load_module()
-            time.sleep(3)
-
-            from unlock.pcie_config_unlock import unlock_pcie_gen5_config
-            gen5_ok = unlock_pcie_gen5_config(pci_full)
-            if gen5_ok:
-                log.info("[%s] Gen5 x16 UNLOCKED", pci_full)
-            else:
-                log.warning("[%s] Gen5 config unlock did not succeed", pci_full)
-        except Exception as e:
-            log.warning("[%s] Gen5 research failed: %s", pci_full, e)
-
-        # BAR0 fallback
-        try:
-            with Bar0(pci_full) as bar0:
-                bar0.wr32(0x009088, 0x06)
-                val = bar0.rd32(0x009088)
-                log.info("[%s] Gen5 BAR0 fallback: wrote 0x06, got 0x%08x", pci_full, val)
-        except Exception as e:
-            log.warning("[%s] Gen5 BAR0 fallback error: %s", pci_full, e)
-
     all_ok = cfg1_ok and lmr_ok and ss0_ok and ss1_ok and gen2_ok
     log.info("[%s] Pipeline complete — memory=%s compute=%s features=%s pcie_gen2=%s overall=%s",
              pci_full,
@@ -458,8 +408,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="CMP 170HX unlock pipeline")
     parser.add_argument("pci", nargs="?", help="PCI BDF address")
     parser.add_argument("gsp", nargs="?", help="GSP firmware path")
-    parser.add_argument("target", nargs="?", help="Memory target (unlocked_40gb, unlocked_80gb)")
-    parser.add_argument("--gen5", action="store_true", help="Attempt Gen5 unlock (research)")
     args = parser.parse_args()
 
     pci = args.pci
@@ -469,7 +417,7 @@ def main() -> None:
         if pci is None:
             print("ERROR: No compatible GPU found")
             sys.exit(1)
-    ok = run_full_unlock(pci, args.gsp, args.target, gen5=args.gen5)
+    ok = run_full_unlock(pci, args.gsp)
     sys.exit(0 if ok else 1)
 
 
