@@ -13,6 +13,28 @@ sudo ./cmpunlocker/scripts/pcie_gen4_unlock.sh # Gen 2-5 x16 (auto-detect)
 
 ---
 
+## ⚠️ Critical Issues & Limitations
+
+**READ BEFORE INSTALLING:** This unlock implementation has two critical issues that affect stability:
+
+### 1. RCU Kernel Locking Violation (Intermittent Kernel Panics)
+The watchdog daemon's 1-second polling loop triggers **kernel panics** by violating RCU synchronization invariants. Occurs intermittently (hours to days of uptime) when daemon polling coincides with GPU driver operations.
+
+**Workaround:** Increase `CMPUNLOCKER_CHECK_INTERVAL=300` in systemd service (5-minute polling instead of 1-second reduces but doesn't eliminate crashes).
+
+### 2. Falcon BootROM Corruption (Unbootable After ~10 Reboots)
+Each ROP chain execution corrupts Falcon's internal state. After ~10-15 system reboots with daemon reapplication, Falcon cannot initialize GSP firmware and GPU becomes unbootable. Requires manual recovery (undocumented "bullaytin specific fork" procedure).
+
+**Workaround:** Apply unlock once and avoid frequent reboots. Reapply manually after power cycles if needed.
+
+### Recommendation
+✅ **Safe for:** Research, testing, one-time unlock on systems with manual recovery capability  
+❌ **Not recommended for:** Production systems with frequent reboots or long uptime requirements
+
+**For detailed analysis, causes, and mitigation strategies:** See `CRITICAL_ISSUES.md` and `CODE_REVIEW.md`
+
+---
+
 ## Background
 
 The CMP 170HX is a physically complete GA100 die — the same silicon as the A100 datacenter GPU — with compute throughput, memory capacity, and other features artificially restricted via OTP fuses and firmware-enforced register locks.

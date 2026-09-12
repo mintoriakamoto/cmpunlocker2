@@ -443,6 +443,86 @@ This is the boundary where exploit capability ends and firmware protection begin
 
 ---
 
+## Part 12: Critical Issues & Limitations
+
+### Issue 1: RCU Kernel Locking Violation (Critical)
+
+**Location:** `cmpunlocker/daemon/watchdog.py` lines 195-198
+
+**Problem:** The watchdog daemon's 1-second polling loop causes kernel panics by triggering context switches within RCU read-side critical sections:
+
+```
+WARNING: kernel/rcu/tree_plugin.h:332 at rcu_note_context_switch
+Voluntary context switch within RCU read-side critical section!
+CPU#11: CORRUPTED
+```
+
+**Root Cause:** BAR0 access calls (`is_unlocked()`, `is_memory_unlocked()`) may coincide with GPU driver operations that hold RCU read-side locks. The `time.sleep(1)` call then triggers a context switch, violating RCU invariants.
+
+**Impact:** Intermittent kernel panics under system load (not reproducible every run, depends on timing)
+
+**Workaround:** Until fixed, increase CHECK_INTERVAL to 300+ seconds or disable daemon and reapply unlock manually after reboots.
+
+**Fix Required:** Replace polling with event-based monitoring (sysfs inotify, netlink socket, or uevent listener).
+
+See `CODE_REVIEW.md` for detailed analysis and recommendations.
+
+### Issue 2: Falcon BootROM Corruption (Critical)
+
+**Location:** `cmpunlocker/payload/pipeline.py` lines 90-125
+
+**Problem:** Each ROP chain execution in Falcon BootROM corrupts Falcon's internal state. After ~11 PLM writes (via daemon reapplication), Falcon cannot initialize GSP firmware:
+
+```
+GSP firmware initialization failed: status=0xffff
+(728 BooterLoad failures)
+RmInitAdapter failed — GPU unbootable
+```
+
+**Root Cause:** The ROP chain modifies Falcon DMEM and registers. Falcon lacks a reset mechanism to clean up between ROP executions. After multiple executions, Falcon's execution state becomes unrecoverable without hardware intervention.
+
+**Impact:** After ~10 daemon reapplications (or 10 system reboots), system becomes unbootable until recovery procedure is applied.
+
+**Recovery:** Use "bullaytin specific fork" recovery mechanism (procedure undocumented; user performed manual recovery).
+
+**Workaround:** Apply unlock once and avoid frequent reboots. Each system boot requires full unlock reapplication; after ~10 reboots, recovery is needed.
+
+**Fix Required:** Either:
+1. Reset Falcon to clean state between ROP chains, OR
+2. Implement persistent unlock without repeated Falcon BootROM execution
+
+See `CODE_REVIEW.md` for detailed analysis and architectural recommendations.
+
+### Issue 3: Memory Limit Targets (False Hope)
+
+**Configuration:** `cmpunlocker/common/constants.yaml` lines 64-70 defines `unlocked_64gb` and `unlocked_80gb` targets
+
+**Problem:** These targets don't actually work—firmware validation rejects CFG1 writes for 80GB/64GB capacity. The code supports writing the values, but the GPU firmware's state machine rejects them and resets to factory settings.
+
+**Recommendation:** Keep these as **research-only targets** with explicit warnings. Remove from default configuration and require `--target=unlocked_80gb` flag with prominent warnings that:
+- These values don't actually unlock 80GB/64GB
+- Firmware-level protection prevents them from working
+- Only 40GB (10GB model) and 32GB (8GB model) are achievable
+
+### Issue 4: Unverified Feature Unlocks
+
+**Configuration:** `cmpunlocker/common/constants.yaml` lines 98-150
+
+**Problem:** Most feature unlocks (nvlink_enable, ecc_enable, arc_mutex) are marked as "community guess, NOT verified" but are currently applied by default.
+
+**Risk:** Unverified register writes may corrupt GPU state silently or cause cascading failures.
+
+**Recommendation:** Disable unverified features by default. Require explicit `--enable-feature=nvlink` flags to use them, with warnings that they are unsupported and may cause GPU corruption.
+
+**Currently Verified:**
+- ✅ SS0/SS1 (compute unlock) — A100 community-verified
+- ✅ PCIe Gen 2-5 (XVE space) — NVIDIA firmware code
+- ❌ NVLink enable — Unverified guess
+- ❌ ECC enable — Unverified guess
+- ❌ ARC mutex — Unverified guess
+
+---
+
 ## Conclusion
 
 **Complete unlock implementation** delivering:
