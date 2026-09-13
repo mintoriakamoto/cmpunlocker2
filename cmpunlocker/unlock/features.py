@@ -33,11 +33,14 @@ log = logging.getLogger(__name__)
 # pcie_gen4_unlock.sh for proper link retraining. These BAR0 writes
 # set the target speed, but real negotiation happens via PCI config space.
 # For guaranteed Gen 4/5, use: sudo ./pcie_gen4_unlock.sh [BDF]
-FEATURE_ORDER = [
+VERIFIED_FEATURES = [
     "pcie_gen2",
     "pcie_gen3",
     "pcie_gen4",
     "pcie_gen5",
+]
+
+EXPERIMENTAL_FEATURES = [
     "nvlink_enable",
     "arc_mutex",
     "ecc_enable",
@@ -87,8 +90,12 @@ def is_ecc_enabled(pci_full: str) -> bool:
         return bar0.rd32(ecc['addr']) == ecc['value']
 
 
-def apply_feature_unlocks(pci_full: str) -> dict:
-    """Apply all optional feature unlocks in the correct order.
+def apply_feature_unlocks(pci_full: str, enable_experimental: bool = False) -> dict:
+    """Apply feature unlocks in the correct order.
+
+    By default, only applies verified features (PCIe Gen 2-5).
+    Experimental features (NVLink, ECC, ARC) are disabled unless
+    enable_experimental=True is explicitly passed.
 
     Each feature may have a multi-step sequence (e.g. write → delay → read)
     defined in constants.yaml. If a sequence is defined, it's executed;
@@ -102,15 +109,39 @@ def apply_feature_unlocks(pci_full: str) -> dict:
         log.warning("[%s] PLM not open — skipping feature unlocks", pci_full)
         return result
 
-    for name in FEATURE_ORDER:
-        cfg = get(f'feature_unlocks.{name}')
+    # Apply verified features (always enabled)
+    for name in VERIFIED_FEATURES:
+        cfg = get(f'feature_unlocks.verified.{name}')
         if cfg is None:
+            continue
+        if not cfg.get('enabled', True):
+            log.debug("[%s] Skipping disabled feature: %s", pci_full, name)
             continue
         if 'sequence' in cfg:
             ok = _apply_sequence(pci_full, name, cfg['sequence'])
         else:
             ok = _try_write(pci_full, cfg['addr'], cfg['value'], name)
         result[name] = {"attempted": True, "stuck": ok}
+
+    # Apply experimental features (disabled by default)
+    if enable_experimental:
+        log.warning("[%s] Applying EXPERIMENTAL features (not verified on CMP 170HX)",
+                    pci_full)
+        for name in EXPERIMENTAL_FEATURES:
+            cfg = get(f'feature_unlocks.experimental.{name}')
+            if cfg is None:
+                continue
+            if not cfg.get('enabled', False):
+                log.debug("[%s] Skipping disabled experimental feature: %s "
+                         "(reason: %s)", pci_full, name, cfg.get('reason', 'disabled'))
+                continue
+            log.warning("[%s] Applying unverified feature: %s (%s)",
+                       pci_full, name, cfg.get('reason', 'unknown risk'))
+            if 'sequence' in cfg:
+                ok = _apply_sequence(pci_full, name, cfg['sequence'])
+            else:
+                ok = _try_write(pci_full, cfg['addr'], cfg['value'], name)
+            result[name] = {"attempted": True, "stuck": ok}
 
     return result
 

@@ -27,9 +27,13 @@ from cmpunlocker.payload.pipeline import run_full_unlock
 from cmpunlocker.payload.staged_unlock import get_current_stage
 from unlock.compute import apply_unlock as apply_compute, is_plm_open, is_unlocked
 from unlock.memory import apply_unlock as apply_memory, is_memory_unlocked
-from unlock.features import apply_feature_unlocks, is_pcie_gen2, is_pcie_gen3, is_pcie_gen4, is_pcie_gen5, is_nvlink_enabled
+from unlock.features import apply_feature_unlocks, is_pcie_gen2, is_pcie_gen3, is_pcie_gen4, is_pcie_gen5
 
-CHECK_INTERVAL = int(os.environ.get("CMPUNLOCKER_CHECK_INTERVAL", "1"))  # seconds
+CHECK_INTERVAL = int(os.environ.get("CMPUNLOCKER_CHECK_INTERVAL", "300"))  # seconds
+# NOTE: Default increased to 300s (5 min) to mitigate RCU locking violations.
+# Original 1s polling triggered kernel panics by causing context switches
+# within RCU read-side critical sections. 5-minute polling reduces but does
+# not eliminate risk. For production, replace polling with inotify/netlink.
 LOCK_FILE = "/var/lock/cmpunlocker.lock"
 
 logging.basicConfig(
@@ -130,11 +134,12 @@ def _check_card(pci: str, state: dict) -> None:
             log.info("[%s] Memory unlock recovered", pci)
             state[pci]["memory"] = True
 
-        # Only check features if core unlocks are in place
+        # Only check verified features if core unlocks are in place
+        # (PCIe Gen 2-5; experimental features like NVLink/ECC are disabled by default)
         if compute_ok and memory_ok:
             if (not is_pcie_gen2(pci) or not is_pcie_gen3(pci) or not is_pcie_gen4(pci)
-                or not is_pcie_gen5(pci) or not is_nvlink_enabled(pci)):
-                apply_feature_unlocks(pci)
+                or not is_pcie_gen5(pci)):
+                apply_feature_unlocks(pci, enable_experimental=False)
 
         state[pci]["plm"] = True
 

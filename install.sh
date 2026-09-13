@@ -45,7 +45,7 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Environment variables:"
             echo "  CMPUNLOCKER_PCI=0000:XX:YY.Z  Override GPU detection"
-            echo "  CMPUNLOCKER_TARGET=unlocked_80gb  Memory target (default)"
+            echo "  CMPUNLOCKER_TARGET=unlocked_40gb  Memory target (default, firmware-locked max)"
             exit 0
             ;;
         *)

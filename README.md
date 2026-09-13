@@ -121,9 +121,11 @@ journalctl -u cmpunlocker -f
 | **32GB Memory** | ✅ 4 × 8GB (firmware-locked max) | 8GB model (64GB blocked by firmware) |
 | **Full SM Throughput** | ✅ SS0/SS1 unlock | All 108 SMs at max clock |
 
-**Optional (best-effort):**
-- NVLink enable (community research, not verified on CMP)
-- ECC enable (community research, not verified on CMP)
+**Note on Optional Features:**
+- PCIe Gen 2-5 are verified and applied by default
+- NVLink, ECC, ARC unlocks are **unverified guesses**, disabled by default
+- These features may corrupt GPU state; do not enable unless you understand the risks
+- To enable experimental features, contact maintainer or edit constants.yaml manually
 
 ---
 
