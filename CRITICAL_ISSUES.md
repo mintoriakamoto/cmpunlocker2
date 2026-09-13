@@ -2,14 +2,24 @@
 
 ⚠️ **This document describes critical issues that affect stability and require attention before production deployment.**
 
+## Status Update (2026-09-13)
+
+**Fixes Applied:**
+- ✅ Memory Limits: Changed default from 80GB (firmware-blocked) to 40GB (working)
+- ✅ Unverified Features: Disabled NVLink/ECC/ARC by default (PCIe Gen 2-5 still enabled)
+- 🟡 RCU Violation: Increased polling interval from 1s to 300s (mitigation, not complete fix)
+- ⏳ Falcon Corruption: No fix yet (requires Falcon architecture reverse-engineering)
+
+See **FIXES_APPLIED.md** for details on what changed and why.
+
 ## Overview
 
 The CMP 170HX unlock implementation successfully demonstrates the Falcon BootROM ROP exploit and enables 40GB memory unlock. However, two architectural issues prevent stable long-term operation:
 
-1. **RCU Kernel Locking Violation** — Intermittent kernel panics during daemon operation
+1. **RCU Kernel Locking Violation** — Intermittent kernel panics (mitigated by increased polling interval)
 2. **Falcon BootROM Corruption** — Cumulative state corruption after ~11 PLM writes
 
-Both issues are discovered through code review and real-world testing. Both require significant architectural changes to resolve.
+Both issues are discovered through code review and real-world testing. Both require significant architectural changes to fully resolve.
 
 ---
 
@@ -28,7 +38,7 @@ System freezes or reboots unexpectedly while daemon is running.
 
 ### Root Cause
 
-The watchdog daemon checks GPU state every 1 second using a busy-loop:
+The watchdog daemon checks GPU state using a polling loop:
 
 ```python
 while True:
@@ -37,7 +47,9 @@ while True:
     time.sleep(CHECK_INTERVAL)   # <-- VIOLATION: context switch in RCU critical section
 ```
 
-The `time.sleep(1)` triggers a context switch. If this coincides with GPU driver operations that hold RCU read-side locks, the kernel panics.
+**Default changed to 300 seconds (5 minutes)** to reduce collision probability, but vulnerability persists.
+
+The `time.sleep()` triggers a context switch. If this coincides with GPU driver operations that hold RCU read-side locks, the kernel panics.
 
 **Why it happens:**
 - GPU driver code may hold RCU read-side locks internally
@@ -57,10 +69,12 @@ The `time.sleep(1)` triggers a context switch. If this coincides with GPU driver
 
 ### Temporary Workarounds
 
-1. **Increase CHECK_INTERVAL (Reduces Probability)**
+1. **Increased CHECK_INTERVAL (Default Now 300 Seconds)**
+   **FIXED:** Default polling interval increased from 1 second to 300 seconds (5 minutes).
    ```bash
+   # To further increase interval:
    # Edit /etc/systemd/system/cmpunlocker.service
-   Environment="CMPUNLOCKER_CHECK_INTERVAL=300"  # Check every 5 minutes instead of 1 second
+   Environment="CMPUNLOCKER_CHECK_INTERVAL=3600"  # Check every 1 hour instead
    systemctl daemon-reload && systemctl restart cmpunlocker
    ```
    This reduces collision probability but doesn't eliminate the issue.
@@ -307,35 +321,43 @@ Unknown side effects on GPU operation.
 
 ## Recommendations for Users
 
-### Current (Until Issues Fixed)
+### Current (After Fixes Applied)
 
-**Not recommended for production systems with:**
-- Frequent reboots (multiple times per day)
-- Long uptime requirements (beyond 10 boots)
-- Continuous workload with high reliability demands
-
-**Safe for:**
+**Safer for:**
 - One-time unlock applied, system left running continuously
 - Test/research scenarios
 - Systems with manual recovery capability
+- Systems with infrequent reboots (weekly or less)
+
+**Improvements Made:**
+- ✅ Memory limits now correctly default to 40GB (was confusing 80GB)
+- ✅ Unverified features (NVLink/ECC/ARC) disabled by default
+- 🟡 RCU collision risk reduced by 5x (300s polling vs 1s)
+
+**Still Not Recommended For:**
+- Frequent reboots (more than once per day) — still vulnerable to Falcon corruption
+- Continuous 24/7 workload with high reliability — RCU violation risk remains
+- Production systems without recovery capability
 
 ### Before Production Deployment
 
 **Must address:**
-1. RCU locking violation (kernel panic risk)
-2. Falcon corruption recovery procedure (or eliminate the need to reapply)
+1. RCU locking violation (kernel panic risk) — needs event-based monitoring
+2. Falcon corruption (unbootable after ~10-15 reboots) — needs reverse-engineering
 
-**Should address:**
-3. Memory limit targets clarification
-4. Feature unlock verification
+**Already addressed:**
+3. ✅ Memory limit targets clarification (now correctly defaults to 40GB)
+4. ✅ Feature unlock verification (unverified features now disabled)
 
 ---
 
 ## Resources
 
+- **FIXES_APPLIED.md**: Details on fixes applied, what changed, and why
 - **CODE_REVIEW.md**: Detailed code analysis and architectural recommendations
+- **SENIOR_CODE_REVIEW.md**: Professional code quality assessment
 - **IMPLEMENTATION.md Part 12**: Brief issue descriptions
-- **Temporary workarounds**: See sections above
+- **README.md**: Safety warnings and feature documentation
 
 ## Contact & Recovery
 
