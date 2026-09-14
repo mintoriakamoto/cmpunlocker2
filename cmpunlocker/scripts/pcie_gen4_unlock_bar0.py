@@ -30,18 +30,18 @@ Usage:
 
 import argparse
 import os
-import struct
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+# This script lives in cmpunlocker/scripts/, two levels below the actual
+# repo root, so the repo root must be added to sys.path for `cmpunlocker`
+# to be importable when this file is run directly (not via `python -m`).
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
-sys.path.insert(0, str(REPO_ROOT / "cmpunlocker"))
 
-from payload.bar0 import Bar0
-from common.constants import get
+from cmpunlocker.payload.bar0 import Bar0
 
 
 # Hypothetical NV_PTOP_* register addresses (based on NVIDIA naming)

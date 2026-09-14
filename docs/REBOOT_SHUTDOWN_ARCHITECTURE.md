@@ -165,6 +165,7 @@ ConditionPathExists=/sys/bus/pci/
 
 [Service]
 Type=simple
+Environment=PYTHONPATH=/opt/cmpunlocker  # needed for cmpunlocker.* absolute imports
 ExecStart=/usr/bin/python3 /opt/cmpunlocker/cmpunlocker/daemon/watchdog.py
 Restart=on-failure              # Restart only if it crashes
 RestartSec=10                    # Wait 10s before restart
@@ -229,7 +230,7 @@ sudo journalctl -u cmpunlocker -n 50
 nvidia-smi
 
 # 4. Manual unlock attempt
-sudo python3 /opt/cmpunlocker/cmpunlocker/payload/pipeline.py 0000:01:00.0
+sudo PYTHONPATH=/opt/cmpunlocker python3 /opt/cmpunlocker/cmpunlocker/payload/pipeline.py 0000:01:00.0
 
 # 5. If manual unlock succeeds but daemon fails:
 # → Daemon issue, not hardware
@@ -346,7 +347,7 @@ nvidia-smi
 ### Emergency Unlock
 ```bash
 # Manually run full unlock without daemon
-sudo python3 /opt/cmpunlocker/cmpunlocker/payload/pipeline.py 0000:01:00.0
+sudo PYTHONPATH=/opt/cmpunlocker python3 /opt/cmpunlocker/cmpunlocker/payload/pipeline.py 0000:01:00.0
 
 # Then restart daemon if needed
 sudo systemctl restart cmpunlocker

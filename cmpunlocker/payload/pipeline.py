@@ -105,7 +105,7 @@ def _open_plm_register(pci_full: str, gsp_path: str, stock_sig: bytes,
         flr_reset(pci_full)
 
         try:
-            from payload.bar0 import Bar0
+            from cmpunlocker.payload.bar0 import Bar0
             with Bar0(pci_full) as bar0:
                 actual = bar0.rd32(write_addr)
         except RuntimeError as e:
@@ -125,7 +125,7 @@ def _open_plm_register(pci_full: str, gsp_path: str, stock_sig: bytes,
 
 def _write_bar0(pci_full: str, addr: int, value: int, label: str) -> bool:
     """Write a value to BAR0 and verify it stuck."""
-    from payload.bar0 import Bar0
+    from cmpunlocker.payload.bar0 import Bar0
     try:
         with Bar0(pci_full) as bar0:
             bar0.wr32(addr, value)
@@ -142,8 +142,8 @@ def _write_bar0(pci_full: str, addr: int, value: int, label: str) -> bool:
     return False
 
 
-def run_full_unlock(pci_full: str, gsp_path: str = None,
-                     target: str = None) -> bool:
+def run_full_unlock(pci_full: str, gsp_path: str | None = None,
+                     target: str | None = None) -> bool:
     """Run the full unlock pipeline (mirrors modified driver)."""
     # Preflight validation: catch common issues early
     try:
@@ -209,7 +209,7 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
     ss1_ok = _write_bar0(pci_full, ss1_addr, ss1_val, 'SS1')
 
     log.info("[%s] Applying optional feature unlocks (PCIe, NVLink, ECC)", pci_full)
-    from unlock.features import apply_feature_unlocks
+    from cmpunlocker.unlock.features import apply_feature_unlocks
     feat_results = apply_feature_unlocks(pci_full)
     feat_ok = all(r.get("stuck", False) for r in feat_results.values()) if feat_results else True
 
@@ -239,7 +239,7 @@ def main() -> None:
     gsp = sys.argv[2] if len(sys.argv) > 2 else None
     target = sys.argv[3] if len(sys.argv) > 3 else None
     if pci is None:
-        from payload.gpu import find_gpu
+        from cmpunlocker.payload.gpu import find_gpu
         pci = find_gpu()
         if pci is None:
             print("ERROR: No compatible GPU found")

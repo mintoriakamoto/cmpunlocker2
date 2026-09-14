@@ -150,7 +150,7 @@ def main(argv=None):
         path = update_constants_yaml(res['success'])
         print(f'  ✓ constants.yaml updated: {path}')
     if args.run_pipeline:
-        from payload.pipeline import run_full_unlock
+        from cmpunlocker.payload.pipeline import run_full_unlock
         ok = run_full_unlock(args.bdf)
         print(f'  pipeline result: {ok}')
 

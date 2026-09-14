@@ -5,6 +5,9 @@ ConditionPathExists=/sys/bus/pci/
 
 [Service]
 Type=oneshot
+# /opt/cmpunlocker must be on PYTHONPATH for the `cmpunlocker.*` absolute
+# imports used throughout the package to resolve when run as a bare script.
+Environment=PYTHONPATH=/opt/cmpunlocker
 ExecStart=/usr/bin/python3 /opt/cmpunlocker/cmpunlocker/daemon/gen2_boot.py
 RemainAfterExit=yes
 User=root

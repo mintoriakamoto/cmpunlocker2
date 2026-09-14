@@ -50,7 +50,7 @@ lspci -s 0000:XX:YY.Z | grep Speed
 
 To run Stage 1 manually (e.g. to test before installing the service):
 ```bash
-sudo python3 -m cmpunlocker.daemon.gen2_boot
+sudo PYTHONPATH=/opt/cmpunlocker python3 -m cmpunlocker.daemon.gen2_boot
 ```
 
 ### Stage 2: PLM Opening + Core Unlocks (Medium Risk, Automatic)

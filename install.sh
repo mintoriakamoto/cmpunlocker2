@@ -148,6 +148,10 @@ ok "Installed"
 info "Step 5/6: Running unlock"
 TARGET="${CMPUNLOCKER_TARGET:-unlocked_40gb}"
 
+# INSTALL_DIR must be on PYTHONPATH for the `cmpunlocker.*` absolute imports
+# used throughout the package to resolve when these scripts are run directly.
+export PYTHONPATH="${INSTALL_DIR}"
+
 # Determine which unlock method to use
 if [ -n "$STAGE" ]; then
     # Staged unlock approach

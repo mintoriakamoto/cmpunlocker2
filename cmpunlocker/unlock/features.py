@@ -54,42 +54,42 @@ EXPERIMENTAL_FEATURES = [
 
 def is_pcie_gen2(pci_full: str) -> bool:
     """Check if PCIe target speed is Gen 2 (5.0 GT/s)."""
-    pcie = get('feature_unlocks.pcie_gen2')
+    pcie = get('feature_unlocks.verified.pcie_gen2')
     with Bar0(pci_full) as bar0:
         return bar0.rd32(pcie['addr']) == pcie['value']
 
 
 def is_pcie_gen3(pci_full: str) -> bool:
     """Check if PCIe target speed is Gen 3 (8.0 GT/s)."""
-    pcie = get('feature_unlocks.pcie_gen3')
+    pcie = get('feature_unlocks.verified.pcie_gen3')
     with Bar0(pci_full) as bar0:
         return bar0.rd32(pcie['addr']) == pcie['value']
 
 
 def is_pcie_gen4(pci_full: str) -> bool:
     """Check if PCIe target speed is Gen 4 (16.0 GT/s)."""
-    pcie = get('feature_unlocks.pcie_gen4')
+    pcie = get('feature_unlocks.verified.pcie_gen4')
     with Bar0(pci_full) as bar0:
         return bar0.rd32(pcie['addr']) == pcie['value']
 
 
 def is_pcie_gen5(pci_full: str) -> bool:
     """Check if PCIe target speed is Gen 5 (32.0 GT/s)."""
-    pcie = get('feature_unlocks.pcie_gen5')
+    pcie = get('feature_unlocks.verified.pcie_gen5')
     with Bar0(pci_full) as bar0:
         return bar0.rd32(pcie['addr']) == pcie['value']
 
 
 def is_nvlink_enabled(pci_full: str) -> bool:
     """Check if NVLink is enabled."""
-    nvl = get('feature_unlocks.nvlink_enable')
+    nvl = get('feature_unlocks.experimental.nvlink_enable')
     with Bar0(pci_full) as bar0:
         return bar0.rd32(nvl['addr']) == nvl['value']
 
 
 def is_ecc_enabled(pci_full: str) -> bool:
     """Check if ECC is enabled."""
-    ecc = get('feature_unlocks.ecc_enable')
+    ecc = get('feature_unlocks.experimental.ecc_enable')
     with Bar0(pci_full) as bar0:
         return bar0.rd32(ecc['addr']) == ecc['value']
 
