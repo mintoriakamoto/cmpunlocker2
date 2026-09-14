@@ -1,3 +1,16 @@
+"""
+bar0.py — GPU BAR0 register space memory-mapped I/O access.
+
+BAR0 (Base Address Register 0) is the GPU's primary register space accessed
+via /sys/bus/pci/devices/{pci_addr}/resource0. All hardware unlock operations
+(PLM writes, CFG1/LMR memory config, SS0/SS1 compute unlock) write to BAR0.
+
+This module provides a context manager for safe BAR0 access with automatic
+resource cleanup. All reads/writes are little-endian 32-bit integers.
+
+Permissions: Requires root access (BAR0 is device-level I/O memory).
+"""
+
 import mmap
 import os
 import struct

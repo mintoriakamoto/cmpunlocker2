@@ -1,18 +1,24 @@
 """
-features.py — Optional feature unlocks (PCIe Gen4, NVLink, ECC, PLL, Power).
+features.py — Optional feature unlocks (PCIe Gen2-5, NVLink, ECC, ARC Mutex).
 
-These writes are applied AFTER the core memory + compute unlock
-succeeds. They are best-effort: failure on any one is logged but
-does not fail the whole unlock.
+This module applies optional feature unlocks AFTER the core memory + compute
+unlock succeeds. All feature operations are best-effort: failure on any one
+is logged but does not fail the whole unlock sequence.
 
-Each feature has a `sequence` in constants.yaml that defines an
-ordered list of operations:
-  - write: write a value to BAR0
+Feature Categories:
+  - Verified (PCIe Gen 2-5): Extensively tested on CMP 170HX, safe to enable
+  - Experimental (NVLink, ECC, ARC): Community guesses, NOT verified, disabled by default
+
+Each feature has a `sequence` in constants.yaml defining ordered operations:
+  - write: write a value to BAR0 with read-back verification
   - read: read a BAR0 register (optional mask+expect for verification)
   - delay: sleep for N milliseconds (for hardware settling)
 
-The sequence format is critical because hardware features like PCIe
-link retraining and NVLink initialization need timed operations.
+Sequence format is critical because hardware features (PCIe link retraining,
+NVLink initialization) need precise timing and state verification.
+
+Security Note: All BAR0 offsets validated against known safe ranges; unknown
+offsets trigger warnings and are skipped.
 """
 
 import logging
