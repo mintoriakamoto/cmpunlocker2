@@ -6,12 +6,8 @@ removed by writing SS0 and SS1 to FEAT_OVR_SM_SPD registers.
 """
 
 import logging
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from payload.bar0 import Bar0
-from common.constants import get
+from cmpunlocker.payload.bar0 import Bar0
+from cmpunlocker.common.constants import get
 
 log = logging.getLogger(__name__)
 
@@ -33,7 +29,7 @@ def is_unlocked(pci_full: str) -> bool:
                 bar0.rd32(ss1_addr) == ss1_value)
 
 
-def apply_unlock(pci_full: str) -> tuple:
+def apply_unlock(pci_full: str) -> tuple[bool, str]:
     plm_addr = get('host_bar0_writes.feat_ovr_plm.addr')
     plm_open = get('host_bar0_writes.feat_ovr_plm.value')
     ss0_addr = get('host_bar0_writes.ss0.addr')

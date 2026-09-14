@@ -7,17 +7,13 @@ performs those writes from the host driver in NS-mode.
 """
 
 import logging
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from payload.bar0 import Bar0
-from common.constants import get
+from cmpunlocker.payload.bar0 import Bar0
+from cmpunlocker.common.constants import get
 
 log = logging.getLogger(__name__)
 
 
-def get_target_values(target: str = None):
+def get_target_values(target: str | None = None) -> tuple[int, int]:
     """Return the (cfg1, lmr) target values for the given memory target."""
     if target is None:
         target = get('memory_unlock.default_target')
@@ -27,7 +23,7 @@ def get_target_values(target: str = None):
     return targets[target]['cfg1'], targets[target]['lmr']
 
 
-def is_memory_unlocked(pci_full: str, target: str = None) -> bool:
+def is_memory_unlocked(pci_full: str, target: str | None = None) -> bool:
     """Check if CFG1 and LMR are currently set to the target values."""
     cfg1_want, lmr_want = get_target_values(target)
     cfg1_addr = get('memory_unlock.cfg1.addr')
@@ -38,7 +34,7 @@ def is_memory_unlocked(pci_full: str, target: str = None) -> bool:
     return cfg1 == cfg1_want and lmr == lmr_want
 
 
-def current_memory_config(pci_full: str) -> dict:
+def current_memory_config(pci_full: str) -> dict[str, int | str]:
     """Read the current CFG1 and LMR values and decode them."""
     cfg1_addr = get('memory_unlock.cfg1.addr')
     lmr_addr  = get('memory_unlock.lmr.addr')
@@ -67,7 +63,7 @@ def current_memory_config(pci_full: str) -> dict:
     }
 
 
-def apply_unlock(pci_full: str, target: str = None) -> tuple:
+def apply_unlock(pci_full: str, target: str | None = None) -> tuple[bool, str]:
     """Apply the memory unlock: write CFG1 and LMR via BAR0.
 
     Returns (success, message).

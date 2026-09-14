@@ -1,9 +1,10 @@
 import mmap
 import os
 import struct
+from typing import Any
 
-from common.constants import get
-from .gpu import bar0_path
+from cmpunlocker.common.constants import get
+from cmpunlocker.payload.gpu import bar0_path
 
 
 class Bar0:
@@ -46,8 +47,9 @@ class Bar0:
         self._mm.close()
         os.close(self._fd)
 
-    def __enter__(self):
+    def __enter__(self) -> "Bar0":
         return self
 
-    def __exit__(self, *_):
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None,
+                 exc_tb: Any) -> None:
         self.close()

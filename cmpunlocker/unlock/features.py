@@ -16,13 +16,11 @@ link retraining and NVLink initialization need timed operations.
 """
 
 import logging
-import sys
-import os
 import time
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from typing import Any
 
-from payload.bar0 import Bar0
-from common.constants import get
+from cmpunlocker.payload.bar0 import Bar0
+from cmpunlocker.common.constants import get
 
 log = logging.getLogger(__name__)
 
@@ -90,7 +88,7 @@ def is_ecc_enabled(pci_full: str) -> bool:
         return bar0.rd32(ecc['addr']) == ecc['value']
 
 
-def apply_feature_unlocks(pci_full: str, enable_experimental: bool = False) -> dict:
+def apply_feature_unlocks(pci_full: str, enable_experimental: bool = False) -> dict[str, dict[str, Any]]:
     """Apply feature unlocks in the correct order.
 
     By default, only applies verified features (PCIe Gen 2-5).
@@ -146,7 +144,7 @@ def apply_feature_unlocks(pci_full: str, enable_experimental: bool = False) -> d
     return result
 
 
-def _apply_sequence(pci_full: str, name: str, sequence: list) -> bool:
+def _apply_sequence(pci_full: str, name: str, sequence: list[dict[str, Any]]) -> bool:
     """Execute a multi-step sequence for a feature unlock.
 
     Each step is a dict with 'op' key:

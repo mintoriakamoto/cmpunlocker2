@@ -18,16 +18,14 @@ import os
 import signal
 import sys
 import time
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from typing import Any
 
 from cmpunlocker.payload.gpu import find_all_gpus
 from cmpunlocker.payload.pipeline import run_full_unlock
 from cmpunlocker.payload.staged_unlock import get_current_stage
-from unlock.compute import apply_unlock as apply_compute, is_plm_open, is_unlocked
-from unlock.memory import apply_unlock as apply_memory, is_memory_unlocked
-from unlock.features import apply_feature_unlocks, is_pcie_gen2, is_pcie_gen3, is_pcie_gen4, is_pcie_gen5
+from cmpunlocker.unlock.compute import apply_unlock as apply_compute, is_plm_open, is_unlocked
+from cmpunlocker.unlock.memory import apply_unlock as apply_memory, is_memory_unlocked
+from cmpunlocker.unlock.features import apply_feature_unlocks, is_pcie_gen2, is_pcie_gen3, is_pcie_gen4, is_pcie_gen5
 
 CHECK_INTERVAL = int(os.environ.get("CMPUNLOCKER_CHECK_INTERVAL", "300"))  # seconds
 # NOTE: Default increased to 300s (5 min) to mitigate RCU locking violations.
@@ -44,10 +42,10 @@ logging.basicConfig(
 log = logging.getLogger("cmpunlocker")
 
 
-def _acquire_lock():
+def _acquire_lock() -> int | None:
     """Acquire an exclusive lock to prevent concurrent unlocks.
 
-    Returns file object if lock acquired, None if another process holds it.
+    Returns file descriptor if lock acquired, None if another process holds it.
     """
     try:
         # Create lock file with mode 0o644
@@ -65,7 +63,7 @@ def _acquire_lock():
         return None
 
 
-def _release_lock(fd):
+def _release_lock(fd: int | None) -> None:
     """Release the lock and close the file."""
     if fd is not None:
         try:
@@ -90,7 +88,7 @@ def _unlock_card(pci: str) -> None:
         _release_lock(lock_fd)
 
 
-def _check_card(pci: str, state: dict) -> None:
+def _check_card(pci: str, state: dict[str, dict[str, Any]]) -> None:
     try:
         stage = get_current_stage(pci)
         if stage < 2:
