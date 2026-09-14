@@ -123,15 +123,15 @@ esac
 ok "GPU: ${PCI_FULL} – ${GPU_NAME}"
 
 info "Step 3/6: Verifying driver compatibility"
-# 610.x family (610.43.02+): Falcon BootROM ROP exploit compatible
+# Verified families per constants.yaml driver_compatibility: 580.x, 590-595.x, 610.x
 DRIVER_VERSION=$(timeout 3 nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | grep -v "^No devices" | head -1)
 if [ -z "$DRIVER_VERSION" ]; then
     warn "Could not detect driver version (nvidia-smi failed or not found)"
 else
     DRIVER_MAJOR=$(echo "$DRIVER_VERSION" | cut -d. -f1)
     case "$DRIVER_MAJOR" in
-        61) ok "Driver ${DRIVER_VERSION} (610.x verified compatible)" ;;
-        *) warn "Driver ${DRIVER_VERSION} (may not work, 610.x recommended)" ;;
+        580|590|591|592|593|594|595|610) ok "Driver ${DRIVER_VERSION} (verified compatible)" ;;
+        *) warn "Driver ${DRIVER_VERSION} (untested — verified: 580.x, 590-595.x, 610.x)" ;;
     esac
 fi
 

@@ -125,14 +125,16 @@ journalctl -u cmpunlocker | grep "Monitor error"
 Configure daemon behavior without editing code:
 
 ```bash
-# Change monitoring interval (default: 1 second)
-sudo CMPUNLOCKER_CHECK_INTERVAL=5 systemctl restart cmpunlocker
+# Change monitoring interval (default: 300 seconds / 5 minutes)
+# WARNING: do not set this much below 300 -- sub-second/low-second polling
+# can trigger an RCU locking violation (kernel panic risk). See CRITICAL_ISSUES.md.
+sudo CMPUNLOCKER_CHECK_INTERVAL=600 systemctl restart cmpunlocker
 
 # Or set persistently in /etc/systemd/system/cmpunlocker.service.d/override.conf
 sudo mkdir -p /etc/systemd/system/cmpunlocker.service.d
 cat << 'EOF' | sudo tee /etc/systemd/system/cmpunlocker.service.d/override.conf
 [Service]
-Environment="CMPUNLOCKER_CHECK_INTERVAL=5"
+Environment="CMPUNLOCKER_CHECK_INTERVAL=600"
 EOF
 sudo systemctl daemon-reload
 sudo systemctl restart cmpunlocker
@@ -196,9 +198,9 @@ The daemon tracks unlock state per GPU. Expected transitions:
 ## Performance
 
 ### Expected Resource Usage
-- **CPU:** <1% in steady state (1-second polling)
+- **CPU:** <1% in steady state (default 300s polling interval)
 - **Memory:** ~50 MB resident (Python + BAR0 context)
-- **I/O:** 4 BAR0 reads per second per GPU (minimal)
+- **I/O:** ~4 BAR0 reads per GPU every CHECK_INTERVAL seconds (default 300s; negligible)
 
 ### Long-term Stability
 - Runs continuously for days/weeks without issue
@@ -249,8 +251,8 @@ if gpus:
         # Read CFG1/LMR (memory unlock)
         cfg1 = bar0.rd32(0x009A0204)
         lmr = bar0.rd32(0x00100CE0)
-        print(f"CFG1: 0x{cfg1:08x} (should be 0x02779000 for 80GB)")
-        print(f"LMR: 0x{lmr:08x}")
+        print(f"CFG1: 0x{cfg1:08x} (should be 0x02669000 for the default 40GB target)")
+        print(f"LMR: 0x{lmr:08x} (should be 0x0000028a)")
 EOF
 ```
 

@@ -18,9 +18,9 @@ sudo ./cmpunlocker/scripts/pcie_gen4_unlock.sh # Gen 2-5 x16 (auto-detect)
 **READ BEFORE INSTALLING:** This unlock implementation has two critical issues that affect stability:
 
 ### 1. RCU Kernel Locking Violation (Intermittent Kernel Panics)
-The watchdog daemon's 1-second polling loop triggers **kernel panics** by violating RCU synchronization invariants. Occurs intermittently (hours to days of uptime) when daemon polling coincides with GPU driver operations.
+Sub-second daemon polling can trigger **kernel panics** by violating RCU synchronization invariants when polling coincides with GPU driver operations. The default polling interval is now `CMPUNLOCKER_CHECK_INTERVAL=300` (5 minutes) specifically to mitigate this — this reduces but does not eliminate the risk, since the underlying architectural issue (polling-based BAR0 access) is unchanged.
 
-**Workaround:** Increase `CMPUNLOCKER_CHECK_INTERVAL=300` in systemd service (5-minute polling instead of 1-second reduces but doesn't eliminate crashes).
+**Do not** lower `CMPUNLOCKER_CHECK_INTERVAL` much below 300 — that reintroduces the crash risk this default exists to avoid.
 
 ### 2. Falcon BootROM Corruption (Unbootable After ~10 Reboots)
 Each ROP chain execution corrupts Falcon's internal state. After ~10-15 system reboots with daemon reapplication, Falcon cannot initialize GSP firmware and GPU becomes unbootable. Requires manual recovery (undocumented "bullaytin specific fork" procedure).
@@ -138,7 +138,7 @@ The exploit is the same one used in the `open-gpu-kernel-modules-610.43.03` driv
 3. The chain performs a single BAR0 write of `0xFFFFFFFF` to a target PLM register.
 4. We do this up to 8 times (for `WPR_CFG`, `FBPA`, `WPR`, `FEAT`, and 4 additional PLM registers) to open the Platform Lock Manager.
 5. With PLM open, the host driver writes the compute unlock (`SS0`, `SS1`) and memory unlock (`CFG1`, `LMR`) values via BAR0.
-6. Memory unlock is **firmware-protected**: CFG1/LMR accept values up to 40GB (10GB model) or 32GB (8GB model), but firmware-level state validation rejects higher values. This protection persists even with all 8 PLM registers open.
+6. Memory unlock is **firmware-protected**: CFG1/LMR accept values up to 40GB (10GB model) or 32GB (8GB model), but firmware-level state validation rejects higher values. This protection persists even with all 4 PLM registers open.
 7. The original GSP signature is restored so the driver doesn't detect tampering.
 8. The driver continues normal init with unlocked compute clock and firmware-limited memory.
 
@@ -181,7 +181,7 @@ The daemon is enabled at boot via systemd and restarts automatically on failure.
 
 Edit `cmpunlocker/common/constants.yaml` to change:
 
-- `memory_unlock.default_target` — default target (80GB or 64GB)
+- `memory_unlock.default_target` — default target (unlocked_40gb; firmware-locked max for 10GB-native cards)
 - `memory_unlock.targets` — available memory configs (6 presets)
 - `plm_table` — PLM register open sequence
 - `rop_payload` — 24-DWORD ROP chain (advanced)

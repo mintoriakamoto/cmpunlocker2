@@ -102,7 +102,7 @@ Completed full-stack architectural analysis of cmpunlocker2 codebase:
 ## What Works vs. What's Broken
 
 ### ✅ Working
-- Falcon BootROM ROP exploit (opens all 8 PLM registers)
+- Falcon BootROM ROP exploit (opens all 4 PLM registers)
 - 40GB/32GB memory unlock (firmware-verified, tested stable)
 - Full compute unlock (SS0/SS1)
 - PCIe Gen 2-5 unlocks

@@ -108,7 +108,7 @@ Bit layout:
 | **unlocked_40gb** | **0x66** | **0x90** | **8GB** | **40GB** | **0x02669000** | **✅ Tested stable** |
 | unlocked_80gb | 0x77 | 0x90 | 16GB | 80GB | 0x02779000 | ❌ Firmware-rejected |
 
-**Firmware Protection:** All attempts to write CFG1 values beyond 40GB (10GB model) or 32GB (8GB model) are rejected by firmware-level state validation. The firmware performs a state-machine check on CFG1 writes that verifies the target value against an internal limit. Even with all 8 PLM registers open, the firmware refuses to accept higher values. This is a designed constraint, not a software limitation.
+**Firmware Protection:** All attempts to write CFG1 values beyond 40GB (10GB model) or 32GB (8GB model) are rejected by firmware-level state validation. The firmware performs a state-machine check on CFG1 writes that verifies the target value against an internal limit. Even with all 4 PLM registers open, the firmware refuses to accept higher values. This is a designed constraint, not a software limitation.
 
 ### LMR Register (0x00100CE0)
 
@@ -360,7 +360,7 @@ sudo ./cmpunlocker/scripts/pcie_gen4_unlock.sh
 ### Configuration
 
 Edit `cmpunlocker/common/constants.yaml` to change:
-- `memory_unlock.default_target` (default: unlocked_80gb)
+- `memory_unlock.default_target` (default: unlocked_40gb, firmware-locked max)
 - `memory_unlock.targets` (add custom configs)
 - `plm_table` (advanced: register sequence)
 - `rop_payload` (advanced: ROP chain tweaks)
@@ -407,7 +407,7 @@ Edit `cmpunlocker/common/constants.yaml` to change:
 
 ### How the Protection Works
 
-When a CFG1 write is attempted (even with all 8 PLM registers open):
+When a CFG1 write is attempted (even with all 4 PLM registers open):
 
 ```
 GPU Firmware State Machine:
@@ -439,7 +439,7 @@ The 40GB/32GB limit is a **designed hardware constraint**, baked into the GPU's 
 - ✅ Firmware *allows* PLM opening (for legitimate use cases)
 - ❌ Firmware *rejects* CFG1 values > 40GB/32GB (protection enforced in silicon logic)
 
-This is the boundary where exploit capability ends and firmware protection begins. All 8 PLM registers can be opened, but the firmware's validator still enforces its limits on what values CFG1 will accept.
+This is the boundary where exploit capability ends and firmware protection begins. All 4 PLM registers can be opened, but the firmware's validator still enforces its limits on what values CFG1 will accept.
 
 ---
 

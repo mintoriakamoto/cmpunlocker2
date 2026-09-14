@@ -215,7 +215,7 @@ fcntl.flock(lock_fd, fcntl.LOCK_EX)  # Exclusive lock
 **Root Causes**:
 1. GSP firmware patching corrupted (fixed in c05a274)
 2. GPU hardware state invalid (FLR reset issue)
-3. Driver version incompatible (requires 610.43.02+)
+3. Driver version incompatible (verified families: 580.x, 590-595.x, 610.x — see constants.yaml driver_compatibility)
 4. GPU firmware not found or inaccessible
 
 **Recovery**:

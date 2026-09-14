@@ -166,13 +166,14 @@ On the **second ROP chain execution**, Falcon starts with corrupted internal sta
 ### Why Daemon Triggers It
 
 Each daemon initialization runs full unlock pipeline:
-1. Opens 8 PLM registers (8 ROP chain executions)
+1. Opens 4 PLM registers (WPR_CFG, FBPA, WPR, FEAT — 4 ROP chain executions,
+   each retried up to 2 attempts on verification failure)
 2. System boots normally
 3. Driver reload triggers daemon reapplication
-4. Opens 8 PLM registers again
+4. Opens 4 PLM registers again
 5. Repeat...
 
-After boot 2, Falcon has executed ROP chains 16 times. After boot 3, 24 times. Around boot 2-3, cumulative corruption makes GSP initialization fail.
+After boot 2, Falcon has executed ROP chains 8 times. After boot 3, 12 times. Around boot 10-15 (40-60 executions), cumulative corruption makes GSP initialization fail.
 
 ### Workarounds
 

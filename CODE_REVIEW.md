@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-The codebase successfully implements the Falcon BootROM ROP exploit and opens all 8 PLM registers, enabling 40GB memory and full compute unlock. However, **two critical issues prevent stable deployment**:
+The codebase successfully implements the Falcon BootROM ROP exploit and opens all 4 PLM registers, enabling 40GB memory and full compute unlock. However, **two critical issues prevent stable deployment**:
 
 1. **RCU Kernel Locking Violation** (watchdog.py): The 1-second polling loop triggers kernel panics by calling `time.sleep()` within RCU read-side critical sections.
 2. **Falcon BootROM Corruption** (pipeline.py): Each ROP chain execution corrupts Falcon's internal state, causing GSP firmware initialization to fail after ~11 PLM writes.
@@ -25,14 +25,14 @@ Both issues are architectural and require significant redesign to resolve.
 The codebase implements a D3DX9-pattern two-stage unlock:
 
 - **Stage 1** (gen2.service): Marks completion, signals Stage 2 should run on next boot
-- **Stage 2** (watchdog.py daemon): Opens all 8 PLM registers, applies memory/compute/feature unlocks
+- **Stage 2** (watchdog.py daemon): Opens all 4 PLM registers, applies memory/compute/feature unlocks
 - **Persistence**: Systemd daemon monitors GPU state and reapplies unlocks after driver reloads
 
 ### Module Organization
 
 | Module | Purpose | Status |
 |--------|---------|--------|
-| `pipeline.py` | Full unlock sequence (8 PLM opens + unlock writes) | Works, but causes Falcon corruption |
+| `pipeline.py` | Full unlock sequence (4 PLM opens + unlock writes) | Works, but causes Falcon corruption |
 | `watchdog.py` | Monitoring daemon that reapplies unlocks | **RCU violation - CRITICAL** |
 | `build.py` | ROP payload construction (24-DWORD chain) | Correct |
 | `gsp_patch.py` | ELF patching for firmware signature section | Correct |

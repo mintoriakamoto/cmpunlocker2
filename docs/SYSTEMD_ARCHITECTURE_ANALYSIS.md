@@ -253,7 +253,12 @@ Instead:
 
 Based on the comparison:
 
-1. **Polling Interval**: Keep d3dx9's 1-second interval if using continuous daemon model
+1. **Polling Interval**: Do NOT keep d3dx9's 1-second interval — cmpunlocker2 adopted the
+   continuous-daemon model initially with this interval and hit intermittent kernel panics
+   from an RCU read-side critical section violation (sub-second polling causing a context
+   switch during concurrent driver operations). The default is now `CMPUNLOCKER_CHECK_INTERVAL=300`
+   (5 minutes); see CRITICAL_ISSUES.md. This mitigates but does not eliminate the risk — a full
+   fix would replace polling with event-based monitoring (inotify/netlink).
 2. **Timeout Configuration**:
    - Use `StartLimitIntervalSec=120 StartLimitBurst=5` to prevent restart loops
    - Use `TimeoutStopSec=5` to prevent blocking shutdown
