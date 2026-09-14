@@ -107,12 +107,12 @@ def _check_card(pci: str, state: dict[str, dict[str, Any]]) -> None:
         # Track compute unlock state
         compute_ok = is_unlocked(pci)
         if not compute_ok:
-            ok, msg = apply_compute(pci)
-            if ok:
+            result = apply_compute(pci)
+            if result.success:
                 log.info("[%s] Reapplied SS0/SS1", pci)
                 state[pci]["compute"] = True
             else:
-                log.warning("[%s] Compute reapply failed: %s", pci, msg)
+                log.warning("[%s] Compute reapply failed: %s", pci, result.message)
                 state[pci]["compute"] = False
         elif state[pci].get("compute") == False:
             log.info("[%s] Compute unlock recovered", pci)
@@ -121,12 +121,12 @@ def _check_card(pci: str, state: dict[str, dict[str, Any]]) -> None:
         # Track memory unlock state
         memory_ok = is_memory_unlocked(pci)
         if not memory_ok:
-            ok, msg = apply_memory(pci)
-            if ok:
+            result = apply_memory(pci)
+            if result.success:
                 log.info("[%s] Reapplied memory unlock", pci)
                 state[pci]["memory"] = True
             else:
-                log.warning("[%s] Memory reapply failed: %s", pci, msg)
+                log.warning("[%s] Memory reapply failed: %s", pci, result.message)
                 state[pci]["memory"] = False
         elif state[pci].get("memory") == False:
             log.info("[%s] Memory unlock recovered", pci)
@@ -135,8 +135,13 @@ def _check_card(pci: str, state: dict[str, dict[str, Any]]) -> None:
         # Only check verified features if core unlocks are in place
         # (PCIe Gen 2-5; experimental features like NVLink/ECC are disabled by default)
         if compute_ok and memory_ok:
-            if (not is_pcie_gen2(pci) or not is_pcie_gen3(pci) or not is_pcie_gen4(pci)
-                or not is_pcie_gen5(pci)):
+            if not is_pcie_gen2(pci):
+                apply_feature_unlocks(pci, enable_experimental=False)
+            elif not is_pcie_gen3(pci):
+                apply_feature_unlocks(pci, enable_experimental=False)
+            elif not is_pcie_gen4(pci):
+                apply_feature_unlocks(pci, enable_experimental=False)
+            elif not is_pcie_gen5(pci):
                 apply_feature_unlocks(pci, enable_experimental=False)
 
         state[pci]["plm"] = True

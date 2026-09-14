@@ -7,10 +7,18 @@ performs those writes from the host driver in NS-mode.
 """
 
 import logging
+from typing import NamedTuple
+
 from cmpunlocker.payload.bar0 import Bar0
 from cmpunlocker.common.constants import get
 
 log = logging.getLogger(__name__)
+
+
+class UnlockResult(NamedTuple):
+    """Standardized result type for unlock operations."""
+    success: bool
+    message: str
 
 
 def get_target_values(target: str | None = None) -> tuple[int, int]:
@@ -63,10 +71,10 @@ def current_memory_config(pci_full: str) -> dict[str, int | str]:
     }
 
 
-def apply_unlock(pci_full: str, target: str | None = None) -> tuple[bool, str]:
+def apply_unlock(pci_full: str, target: str | None = None) -> UnlockResult:
     """Apply the memory unlock: write CFG1 and LMR via BAR0.
 
-    Returns (success, message).
+    Returns UnlockResult with success flag and message.
     """
     cfg1_want, lmr_want = get_target_values(target)
     cfg1_addr = get('memory_unlock.cfg1.addr')
@@ -77,7 +85,7 @@ def apply_unlock(pci_full: str, target: str | None = None) -> tuple[bool, str]:
     with Bar0(pci_full) as bar0:
         plm = bar0.rd32(plm_addr)
         if plm != plm_want:
-            return False, f"PLM not open (0x{plm:08X} vs 0x{plm_want:08X}) — run full unlock first"
+            return UnlockResult(False, f"PLM not open (0x{plm:08X} vs 0x{plm_want:08X}) — run full unlock first")
 
         bar0.wr32(cfg1_addr, cfg1_want)
         bar0.wr32(lmr_addr, lmr_want)
@@ -85,5 +93,5 @@ def apply_unlock(pci_full: str, target: str | None = None) -> tuple[bool, str]:
         lmr  = bar0.rd32(lmr_addr)
 
     if cfg1 == cfg1_want and lmr == lmr_want:
-        return True, f"CFG1=0x{cfg1_want:08x} LMR=0x{lmr_want:08x} applied"
-    return False, f"values did not stick (CFG1=0x{cfg1:08x} LMR=0x{lmr:08x})"
+        return UnlockResult(True, f"CFG1=0x{cfg1_want:08x} LMR=0x{lmr_want:08x} applied")
+    return UnlockResult(False, f"values did not stick (CFG1=0x{cfg1:08x} LMR=0x{lmr:08x})")
