@@ -82,7 +82,15 @@ sudo CMPUNLOCKER_TARGET=unlocked_32gb ./install.sh    # 32GB (firmware-locked ma
 sudo CMPUNLOCKER_TARGET=nativ_8gb ./install.sh        # restore factory 8GB state
 ```
 
-**Note:** 80GB and 64GB targets exist in the config but are rejected by firmware-level protection that persists even with all PLM registers open. Only 40GB (10GB model) and 32GB (8GB model) are achievable via software exploit.
+### Firmware Limitation: Why Not 80GB?
+
+The GPU firmware (GSP) contains a hardcoded memory limit that cannot be bypassed by opening PLM registers. Even with all 4 PLM registers open:
+- **Attempting 80GB**: BAR0 writes succeed → firmware silently caps to 40GB
+- **Attempting 64GB**: BAR0 writes succeed → firmware silently caps to 32GB
+
+This is detected and logged by the unlock pipeline. The firmware cap is enforced at initialization time and ignores the BAR0-written CFG1 value. NVIDIA's hardware design prevents modification of this limit without full firmware replacement (which requires GSP code signing keys).
+
+**Result:** Only **40GB** (5-stack, 10GB model) and **32GB** (4-stack, 8GB model) are achievable via hardware exploit. Higher capacities require a different approach (firmware modification, hardware redesign, or supply-chain access).
 
 ---
 

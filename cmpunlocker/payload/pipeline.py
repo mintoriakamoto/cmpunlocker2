@@ -220,12 +220,18 @@ def run_full_unlock(pci_full: str, gsp_path: str | None = None,
     load_module()
     time.sleep(3)
 
-    all_ok = cfg1_ok and lmr_ok and ss0_ok and ss1_ok
-    log.info("[%s] Pipeline complete — memory=%s compute=%s features=%s overall=%s",
+    # Verify firmware actually accepted the unlock (detects firmware caps)
+    from cmpunlocker.unlock.memory import verify_firmware_accepts_unlock
+    firmware_ok, firmware_msg = verify_firmware_accepts_unlock(pci_full, target)
+    log.info("[%s] Firmware verification: %s", pci_full, firmware_msg)
+
+    all_ok = cfg1_ok and lmr_ok and ss0_ok and ss1_ok and firmware_ok
+    log.info("[%s] Pipeline complete — memory=%s compute=%s features=%s firmware=%s overall=%s",
              pci_full,
              "OK" if (cfg1_ok and lmr_ok) else "FAIL",
              "OK" if (ss0_ok and ss1_ok) else "FAIL",
              "OK" if feat_ok else "PARTIAL",
+             "OK" if firmware_ok else "CAP",
              "OK" if all_ok else "FAIL")
     return all_ok
 
