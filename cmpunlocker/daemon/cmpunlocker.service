@@ -1,7 +1,7 @@
 [Unit]
 Description=NVIDIA CMP 170HX Unlock Daemon
 Documentation=man:cmpunlocker(1)
-After=network.target nvidia-driver.service
+After=network.target nvidia-driver.service gen2.service
 ConditionPathExists=/dev/mem
 ConditionPathExists=/sys/bus/pci/
 

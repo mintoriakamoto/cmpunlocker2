@@ -24,10 +24,8 @@ signature, so the chain runs in HS-mode regardless of signature validity.
 
 import struct
 import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from common.constants import get
+from cmpunlocker.common.constants import get
 
 
 def fill_payload(write_addr: int, write_value: int) -> bytes:

@@ -33,15 +33,13 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from common.constants import get
-from payload.driver import (
+from cmpunlocker.common.constants import get
+from cmpunlocker.payload.driver import (
     aggressive_unload, flr_reset, load_module, stop_display_manager, unload_modules,
 )
-from payload.gsp_patch import patch_gsp
-from payload.preflight import run_preflight, PrefightError
-from payload.build import build as build_payload, fill_payload, refill_payload
+from cmpunlocker.payload.gsp_patch import patch_gsp
+from cmpunlocker.payload.preflight import run_preflight, PrefightError
+from cmpunlocker.payload.build import build as build_payload, fill_payload, refill_payload
 
 log = logging.getLogger(__name__)
 

@@ -1,0 +1,13 @@
+[Unit]
+Description=cmpunlocker Stage 1 (PCIe Gen 2 unlock, runs every boot)
+Before=cmpunlocker.service multi-user.target graphical.target
+ConditionPathExists=/sys/bus/pci/
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/cmpunlocker/cmpunlocker/daemon/gen2_boot.py
+RemainAfterExit=yes
+User=root
+
+[Install]
+WantedBy=multi-user.target

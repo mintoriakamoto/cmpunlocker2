@@ -36,7 +36,7 @@ Flow:
 
 After initial unlock, `cmpunlocker` daemon runs continuously.
 
-### Monitoring Loop (every 1 second)
+### Monitoring Loop (every CMPUNLOCKER_CHECK_INTERVAL seconds, default 300)
 ```python
 1. Acquire lock file (/var/lock/cmpunlocker.lock)
    ├─ If locked: Another process unlocking, skip this cycle
@@ -49,8 +49,15 @@ After initial unlock, `cmpunlocker` daemon runs continuously.
    └─ NO: Run full unlock (Phase 1)
 
 3. Release lock file
-4. Sleep 1 second
+4. Sleep CHECK_INTERVAL seconds
 ```
+
+**Note:** The default interval was raised from 1s to 300s (5 min) to mitigate
+an RCU locking violation — sub-second polling could trigger a context switch
+within an RCU read-side critical section during concurrent driver operations,
+risking a kernel panic. See CRITICAL_ISSUES.md for details. The interval is
+configurable via `CMPUNLOCKER_CHECK_INTERVAL`, but going far below the
+default reintroduces that risk.
 
 ### BAR0 Reapplication
 If PLM is open but specific registers lost:
@@ -68,7 +75,7 @@ If PLM is open but specific registers lost:
 
 ```
 BEFORE SHUTDOWN:
-  GPU hardware state: PLM open, memory unlocked (80GB visible)
+  GPU hardware state: PLM open, memory unlocked (40GB visible, firmware-locked max)
   Kernel memory: Lost
   GSP firmware: Original (restored) with unlocked HW state
 
@@ -81,12 +88,12 @@ ON BOOT:
   Kernel loads, loads nvidia driver
   Driver loads GSP firmware (stock, no tampering)
   GSP firmware closes all PLM registers (default behavior)
-  GPU appears as 10GB CMP card
+  GPU appears as 10GB CMP card (native, no unlock applied)
   
-DAEMON ACTIVATION (first check cycle ~3 seconds after boot):
+DAEMON ACTIVATION (checked immediately at daemon startup, After=gen2.service):
   is_plm_open() → NO
   Daemon triggers full unlock (Phase 1)
-  Within 60 seconds: GPU unlocked to 80GB
+  Within 60 seconds: GPU unlocked to 40GB (firmware-locked max)
   
 RESULT:
   GPU operational at full capacity after boot
@@ -98,15 +105,15 @@ RESULT:
 
 ```
 BEFORE RELOAD:
-  GPU hardware state: PLM open, memory unlocked (80GB visible)
-  Daemon running: Monitoring every 1 second
+  GPU hardware state: PLM open, memory unlocked (40GB visible, firmware-locked max)
+  Daemon running: Monitoring every CHECK_INTERVAL seconds (default 300)
 
 USER RUNS: sudo modprobe -r nvidia
   1. Kernel unloads nvidia driver
   2. BAR0 access becomes invalid
   3. Daemon's next BAR0 read fails (expected)
   
-DAEMON DETECTS (within 1 second):
+DAEMON DETECTS (within one CHECK_INTERVAL cycle, up to 300s by default):
   is_plm_open(GPU) → Exception (no driver)
   _check_card() catches exception, logs warning
   Waits for next cycle
@@ -117,10 +124,10 @@ USER RUNS (or automatic): sudo modprobe nvidia
   3. PLM registers now CLOSED (fresh load)
   4. GPU reverts to 10GB
   
-DAEMON DETECTS (within 1 second):
+DAEMON DETECTS (within one CHECK_INTERVAL cycle, up to 300s by default):
   is_plm_open(GPU) → NO (PLM closed by fresh firmware load)
   Triggers full unlock (Phase 1)
-  Within 60 seconds: GPU unlocked to 80GB
+  Within 60 seconds: GPU unlocked to 40GB (firmware-locked max)
   
 RESULT:
   GPU operational at full capacity after driver reload
@@ -152,7 +159,7 @@ ON RESUME:
 ```ini
 [Unit]
 Description=NVIDIA CMP 170HX Unlock Daemon
-After=network.target nvidia-driver.service
+After=network.target nvidia-driver.service gen2.service
 ConditionPathExists=/dev/mem
 ConditionPathExists=/sys/bus/pci/
 
@@ -202,7 +209,7 @@ fcntl.flock(lock_fd, fcntl.LOCK_EX)  # Exclusive lock
 **Symptoms**:
 - Daemon logs: "WPR_CFG attempt 1 failed"
 - GPU remains locked after 2 retries
-- Repeats every 1 second
+- Repeats every CHECK_INTERVAL cycle (default 300s)
 
 **Root Causes**:
 1. GSP firmware patching corrupted (fixed in c05a274)
@@ -244,8 +251,8 @@ sudo systemctl restart cmpunlocker
 3. Another process touching GPU state
 
 **Recovery**:
-- Daemon automatically retries every 1 second
-- Usually recovers within 5 seconds
+- Daemon automatically retries every CHECK_INTERVAL cycle (default 300s)
+- Usually recovers within one CHECK_INTERVAL cycle (default 300s)
 - If persistent: Same as PLM won't open
 
 ### Daemon Crashes Repeatedly

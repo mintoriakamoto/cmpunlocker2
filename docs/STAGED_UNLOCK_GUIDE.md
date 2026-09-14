@@ -1,15 +1,17 @@
 # D3DX9-Pattern Staged Unlock Guide
 
-This document explains how to use cmpunlocker's staged unlock approach, which follows the D3DX9 pattern with mandatory verification reboots between stages.
+This document explains how to use cmpunlocker's staged unlock approach, which follows the D3DX9 pattern with a mandatory **cold shutdown** (full power-off, not a warm/soft reboot) between stages.
 
 ## Overview
 
-The staged unlock approach reduces risk by breaking the complex unlock process into 2 independent stages, each requiring user verification before proceeding. This allows you to:
+The staged unlock approach reduces risk by breaking the complex unlock process into 2 stages:
 
-1. Test basic BAR0 access with PCIe Gen 2 unlock (Stage 1)
-2. Open PLM and unlock memory (40GB max) + compute + features (Stage 2)
+1. Test basic BAR0 access with PCIe Gen 2 unlock (Stage 1) — runs automatically at every boot via `gen2.service`
+2. Open PLM and unlock memory (40GB max, firmware-locked) + compute + features (Stage 2) — runs automatically via the `cmpunlocker` daemon once Stage 1 has been verified
 
-Each stage can be resumed independently if interrupted, and you can verify success before proceeding to the next stage.
+Each stage is resumable from a persistent state file, and you can verify success before trusting the next stage.
+
+**Why a cold shutdown and not just a reboot?** PCIe link speed (Gen 2/3/4/5) is renegotiated during power-on link training. A warm/soft reboot (`reboot`, ACPI restart) can leave the PCIe root complex's existing link-speed state in place on many boards, which would make Stage 1 look like it "didn't take" even though the BAR0 write succeeded. A full power-off (`sudo shutdown -h now`) followed by powering the system back on forces link retraining, so the Gen 2 target actually shows up in `lspci`.
 
 ## Why Staged Unlock?
 
@@ -20,36 +22,40 @@ Each stage can be resumed independently if interrupted, and you can verify succe
 
 **Staged approach benefits:**
 - Stage 1 is low-risk (just writes to always-accessible XVE register)
-- Mandatory reboot between stages ensures changes persist
+- A cold shutdown between stages ensures the link-speed change actually persists and is verifiable
 - Explicit verification commands between stages
 - If stage 2 fails, you still have stage 1 (Gen 2) working
 - Each stage is resumable from a persistent state file
 
 ## Quick Start
 
-### Stage 1: PCIe Gen 2 Unlock (Low Risk)
+### Stage 1: PCIe Gen 2 Unlock (Low Risk, Automatic)
 
-```bash
-sudo ./install.sh --stage=1
-```
+Stage 1 runs automatically at every boot via `gen2.service` (installed and enabled by `install.sh`). It is volatile — lost on power cycle — so it must reapply on every boot, not just once.
 
 **What it does:**
 - Writes Gen 2 target (0x00000002) to BAR0 XVE register (0x000088)
 - Verifies the write stuck
 - Saves state to `/var/lib/cmpunlocker/stage_0000:XX:YY.Z`
-- Prints reboot instructions
 
-**After Stage 1:**
+**To verify it applied:**
 ```bash
-# Mandatory reboot
+# Do a full power-off, then power back on (not a warm reboot)
 sudo shutdown -h now
 
-# After reboot, verify Gen 2 is present
+# After the system is back up, verify Gen 2 is present
 lspci -s 0000:XX:YY.Z | grep Speed
 # Expected: "Speed 5GT/s" or higher
 ```
 
-### Stage 2: PLM Opening + Core Unlocks (Medium Risk)
+To run Stage 1 manually (e.g. to test before installing the service):
+```bash
+sudo python3 -m cmpunlocker.daemon.gen2_boot
+```
+
+### Stage 2: PLM Opening + Core Unlocks (Medium Risk, Automatic)
+
+Stage 2 runs automatically once the `cmpunlocker` daemon (which starts `After=gen2.service`) sees Stage 1 is complete. To run it manually:
 
 ```bash
 sudo ./install.sh --stage=2
@@ -57,20 +63,20 @@ sudo ./install.sh --stage=2
 
 **What it does:**
 - Reads current stage from state file (must be ≥ 1)
-- Executes ROP exploit to open all 8 PLM registers
+- Executes ROP exploit to open all 4 PLM registers
 - Writes memory unlock (CFG1/LMR) for 40GB (firmware-locked maximum)
 - Writes compute unlock (SS0/SS1) for SM clock
-- Applies PCIe Gen 3-5 and feature unlocks
+- Applies PCIe Gen 3-5 and verified feature unlocks
 - Restores original GSP signature (preserves driver integrity)
 - Reloads driver with unlocked state in place
 - Saves state to stage 2
 
 **After Stage 2:**
 ```bash
-# Mandatory reboot
+# Cold shutdown, then power back on
 sudo shutdown -h now
 
-# After reboot, verify unlock is present
+# After boot, verify unlock is present
 nvidia-smi --query-gpu=memory.total --format=csv,noheader
 # Expected: ~40960 MiB (40GB, firmware-locked maximum)
 
@@ -134,14 +140,15 @@ No manual interaction with the daemon is needed; it automatically adapts to the 
 
 Check the logs:
 ```bash
-journalctl -u cmpunlocker -n 50 -e
+journalctl -u gen2 -n 50 -e         # Stage 1
+journalctl -u cmpunlocker -n 50 -e  # Stage 2 (auto-run by the daemon)
 # or directly running the stage
-sudo ./install.sh --stage=X
+sudo ./install.sh --stage=2
 ```
 
-### Reboot didn't persist the unlock
+### Cold shutdown didn't persist the unlock
 
-If you reboot before marking a stage complete:
+If you power off before a stage records itself complete:
 
 1. Check which stage is marked complete:
    ```bash
@@ -188,14 +195,13 @@ echo "2" | sudo tee /var/lib/cmpunlocker/stage_0000:XX:YY.Z
 ```bash
 # Override GPU detection (PCI address)
 export CMPUNLOCKER_PCI=0000:01:00.0
-sudo ./install.sh --stage=1
 
-# Override memory target (default: unlocked_80gb)
-export CMPUNLOCKER_TARGET=unlocked_80gb
+# Override memory target (default: unlocked_40gb, firmware-locked max)
+export CMPUNLOCKER_TARGET=unlocked_40gb
 sudo ./install.sh --stage=2
 
-# Daemon check interval (seconds, default: 1)
-export CMPUNLOCKER_CHECK_INTERVAL=5
+# Daemon check interval (seconds, default: 300)
+export CMPUNLOCKER_CHECK_INTERVAL=300
 systemctl restart cmpunlocker
 ```
 
@@ -205,19 +211,20 @@ systemctl restart cmpunlocker
 - **Register:** BAR0[0x000088] (XVE)
 - **Value:** 0x00000002 (5.0 GT/s)
 - **Risk:** Very low (doesn't require PLM)
-- **Persistence:** Volatile (lost on power cycle)
+- **Persistence:** Volatile (lost on power cycle) — reapplied every boot by `gen2.service`
 - **Purpose:** Test BAR0 access before exploit
 
 ### Stage 2: PLM Opening + Core Unlocks
 - **Exploit:** Falcon BootROM ROP via modified GSP .fwsignature_ga100
 - **Operations:**
   - Open 4 PLM registers (WPR_CFG, FBPA, WPR, FEAT)
-  - Write CFG1 (0x02779000) for 80GB memory
+  - Write CFG1 for 40GB memory (firmware-locked maximum; 80GB is defined for
+    research but is rejected by firmware-level validation)
   - Write LMR (0x0000028A) for memory layout
   - Write SS0 (0x88888888) and SS1 (0x00000008) for compute
 - **Risk:** Medium (complex exploit, but highly tested)
 - **Persistence:** Volatile (lost on power cycle)
-- **Verification:** nvidia-smi shows 80GB + 1410+ MHz
+- **Verification:** nvidia-smi shows 40GB + 1410+ MHz
 
 ### Stage 3: Feature Unlocks
 - **Features:** PCIe Gen 3-5, NVLink, ECC, ARC

@@ -21,7 +21,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from common.constants import get
+from cmpunlocker.common.constants import get
 
 log = logging.getLogger(__name__)
 

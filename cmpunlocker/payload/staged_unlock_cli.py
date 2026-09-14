@@ -3,19 +3,16 @@
 staged_unlock_cli.py — Command-line interface for D3DX9-pattern staged unlock.
 
 Usage:
-  staged_unlock.py --stage=1 --pci=0000:01:00.0 --gsp=/lib/firmware/nvidia/550/gsp_tu10x.bin --target=unlocked_80gb
-  staged_unlock.py --stage=2 --pci=0000:01:00.0 --gsp=/lib/firmware/nvidia/550/gsp_tu10x.bin --target=unlocked_80gb
+  staged_unlock_cli.py --stage=1 --pci=0000:01:00.0 --gsp=/lib/firmware/nvidia/550/gsp_tu10x.bin --target=unlocked_40gb
+  staged_unlock_cli.py --stage=2 --pci=0000:01:00.0 --gsp=/lib/firmware/nvidia/550/gsp_tu10x.bin --target=unlocked_40gb
 """
 
 import argparse
 import logging
 import os
 import sys
-from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from payload.staged_unlock import (
+from cmpunlocker.payload.staged_unlock import (
     stage1_pcie_gen2, stage2_plm_core_unlock,
     get_current_stage, is_stage_complete, run_next_stage
 )
@@ -23,7 +20,7 @@ from payload.staged_unlock import (
 log = logging.getLogger(__name__)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="D3DX9-pattern staged GPU unlock with mandatory verification reboots"
     )
@@ -31,8 +28,8 @@ def main():
                         help="Run specific stage (1 or 2)")
     parser.add_argument("--pci", required=True, help="PCI address (e.g., 0000:01:00.0)")
     parser.add_argument("--gsp", required=True, help="Path to GSP firmware file")
-    parser.add_argument("--target", default="unlocked_80gb",
-                        help="Memory unlock target (default: unlocked_80gb)")
+    parser.add_argument("--target", default="unlocked_40gb",
+                        help="Memory unlock target (default: unlocked_40gb, firmware-locked max)")
     parser.add_argument("--auto", action="store_true",
                         help="Run next incomplete stage automatically (skip manual stage selection)")
 

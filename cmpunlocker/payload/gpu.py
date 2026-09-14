@@ -1,14 +1,14 @@
 import re
 import subprocess
 
-from common.constants import get
+from cmpunlocker.common.constants import get
 
 
-def _device_id_set() -> set:
+def _device_id_set() -> set[str]:
     return {f"10de:{did}" for did in get('gpu.device_ids')}
 
 
-def find_all_gpus() -> list:
+def find_all_gpus() -> list[str]:
     result = subprocess.run(
         ["lspci", "-nn"],
         capture_output=True,
@@ -28,7 +28,7 @@ def find_all_gpus() -> list:
     return gpus
 
 
-def find_gpu() -> str:
+def find_gpu() -> str | None:
     gpus = find_all_gpus()
     return gpus[0] if gpus else None
 
