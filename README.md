@@ -77,7 +77,7 @@ The exploit is the same one used in the `open-gpu-kernel-modules-610.43.03` driv
 
 1. The Falcon BootROM loads the `.fwsignature_ga100` ELF section content into DMEM *before* verifying the signature (the bug).
 2. We replace the section content with a 63KB ROP chain.
-3. The chain performs a single BAR0 write of `0xFFFFFFFF` to a target PLM register.
+3. The chain performs a single BAR0 write of the correct PLM value to a target PLM register.
 4. We do this 11 times to open all Platform Lock Manager registers.
 5. With PLM open, the host driver writes the memory unlock (`CFG1`, `LMR`) and compute unlock (`SS0`, `SS1`) values via BAR0.
 6. The original GSP signature is restored so the driver doesn't detect tampering.
@@ -85,18 +85,39 @@ The exploit is the same one used in the `open-gpu-kernel-modules-610.43.03` driv
 
 The unlock is **volatile** (lost on power cycle) but reapplied automatically by the daemon.
 
+**CRITICAL: PLM values must be firmware-actual, not 0xffffffff.**
+Using 0xffffffff for FEAT/FEAT2 registers corrupts Falcon state and triggers the 4-try lockout.
+See `cmpunlocker/common/constants.yaml` for correct values.
+
 ---
 
-## Persistence
+## Recovery
 
-The installed daemon (`cmpunlocker.service`) handles persistence:
+If something goes wrong (wrong PLM values, lockout, driver corruption):
 
-- **On boot**: runs the full unlock pipeline before the display manager starts
-- **Every 10 seconds**: checks SS0/SS1 and CFG1/LMR via BAR0 and rewrites them if drifted
-- **On driver reload**: detects a closed PLM and reruns the full pipeline
-- **Multiple cards**: all CMP 170HX GPUs present in the system are handled
+```bash
+cd /home/ai/.hermes/cmp_lab/buliaoyin-cmpunlocker
+sudo ./install.sh --profile=10gb --no-iommu
+sudo shutdown -h now   # cold boot required (60s capacitor discharge)
+```
 
-The daemon is enabled at boot via systemd and restarts automatically on failure.
+The buliaoyin-cmpunlocker uses a different unlock method and is the recovery path.
+
+---
+
+## Branches
+
+| Branch | Purpose |
+|--------|----------|
+| `master` | Stable 40GB + 1410MHz + Gen2 (recommended) |
+| `unlock-80gb` | Experimental 80GB target (blocked by firmware/hardware — see notes) |
+| `unlock-gen3` | Experimental Gen3 PCIe unlock (blocked by OTP fuse — see notes) |
+
+### Why 80GB fails
+The GPU firmware enforces a "persistent state" lock: once 40GB is applied, the firmware refuses CFG1 changes. A BIOS-level reset (device disable/re-enable) returns to native 10GB state where 80GB unlock is theoretically possible — but HBM timing mismatch then causes GSP crash (Xid 154) at CUDA init.
+
+### Why Gen3/4/5 fails  
+OTP fuse `FUSE_PCIE_GEN23_DIS` is burned at the factory in the immutable BootROM. Software writes to XVE_OVR persist but the physical link never negotiates above Gen2. GA100 hardware max is Gen4; Gen5 is Hopper architecture only.
 
 ---
 
@@ -112,76 +133,14 @@ nvidia-smi -q | grep "Link"
 sudo gen2-cycle 2000
 ```
 
-The `gen2-cycle` script stops GPU processes, does a secondary bus reset, and retrains Gen2. Usually succeeds on cycle 1 (~12 seconds).
-
----
-
-## Recovery
-
-If the unlock is lost (kernel upgrade, driver rebuild), use the built-in recovery tool:
-
-```bash
-# Full diagnostic
-python3 cmprecover diagnose
-
-# Full recovery (GSP → driver → PLM → Gen2)
-sudo python3 cmprecover full
-
-# Individual recovery
-sudo python3 cmprecover plm      # Re-open PLM registers
-sudo python3 cmprecover gen2     # Retrain Gen2 PCIe
-sudo python3 cmprecover driver   # Rebuild driver
-sudo python3 cmprecover gsp      # Restore GSP firmware
-```
-
-### Recovery Order
-
-1. **GSP firmware** — corrupted firmware breaks everything
-2. **Driver** — kernel upgrade requires rebuild
-3. **PLM registers** — locked = no memory/compute unlock
-4. **Gen2 PCIe** — slow link, can be done later
-
-### Manual Recovery (what we actually used)
-
-The lab tree that recovered this box is **buliaoyin-cmpunlocker**, not a GitHub clone of this repo and not the 80GB experiments.
-
-```bash
-cd /home/ai/.hermes/cmp_lab/buliaoyin-cmpunlocker
-sudo ./install.sh --profile=10gb --no-iommu
-sudo shutdown -h now   # cold boot required
-```
-
-That path is this machine only. `cmprecover` above is the in-tree tool.
-
-### Why nvidia-smi may show PCIe Gen 1
-
-On this 170HX the endpoint **LnkCap is 2.5 GT/s only** until the feature unlock + link retrain stick. The CPU bridge can do 32 GT/s; the card is advertising Gen1. `gen2-cycle.service` is **disabled on purpose while TENSELERATE is serving** — that script `rmmod nvidia` and kills anything on `/dev/nvidia*`.
-
-After a cold boot with **no** llama-server:
-
-```bash
-sudo gen2-cycle 2000    # stop GPU users, retrain; usually cycle 1
-```
-
-Stable ceiling we measured: **Gen2 x4**, not Gen4/Gen5. Do not chase 80GB.
-
 ---
 
 ## Key Files
 
 | File | Purpose |
-|------|---------|
+|------|----------|
 | `cmpunlocker/payload/pipeline.py` | Main unlock pipeline |
-| `cmpunlocker/common/constants.py` | PLM tables, register addresses |
+| `cmpunlocker/common/constants.yaml` | PLM tables, register addresses |
 | `cmpunlocker/daemon/watchdog.py` | Daemon watchdog |
-| `/opt/cmpunlocker/` | Deployed copy |
-| `/lib/modules/7.0.0-30-generic/updates/cmpunlocker/nvidia.ko` | Patched driver |
-| `/usr/local/sbin/gen2-cycle` | Gen2 recovery script |
-| `/etc/modprobe.d/cmp-pcie-gen2.conf` | Gen2 kernel parameters |
-
----
-
-## Documentation
-
-- `GEN2_MECHANISM.md` — Complete technical reference (4 write phases, lockout method, recovery)
-- `docs/TROUBLESHOOTING.md` — Common issues and solutions
+| `cmpunlocker/scripts/gen2-cycle` | Gen2 recovery script |
+| `cmpunlocker/scripts/pcie_gen4_unlock.sh` | PCIe config space unlock |
