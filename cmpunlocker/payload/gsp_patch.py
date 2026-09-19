@@ -38,17 +38,7 @@ def _find_signature_section(shdrs: bytearray, e_shentsize: int,
 
 
 def patch_gsp(input_path: str, payload: bytes, output_path: str) -> None:
-    """Patch the .fwsignature_ga100 ELF section with our ROP payload.
-
-    The on-disk section is 0x1000 (4 KB) — only the signature (last 32
-    bytes) is the HMAC. The actual DMEM buffer that the BootROM loads
-    is 0xF800 (62 KB) and is created at runtime by the kernel.
-
-    We use a hybrid approach: the payload we write can be EITHER the
-    62KB DMEM size OR the 4KB section size. For testing the 4KB patch
-    fits cleanly. For real-hardware deploy, the kernel re-creates a
-    62KB buffer.
-    """
+    """Patch the .fwsignature_ga100 ELF section with our ROP payload."""
     signature_section = get('elf.signature_section').encode()
     gsp = bytearray(Path(input_path).read_bytes())
 
@@ -59,27 +49,19 @@ def patch_gsp(input_path: str, payload: bytes, output_path: str) -> None:
     sig_idx, sig_file_off = _find_signature_section(
         shdrs, e_shentsize, strtab, signature_section)
 
-    # Read the original section size from the section header
     orig_size = struct.unpack_from("<Q", shdrs, sig_idx * e_shentsize + 0x20)[0]
 
-    # Always write exactly to the section size. The payload (63KB DMEM buffer)
-    # is loaded by the kernel at runtime, not from the ELF file. The on-disk
-    # section is only 4KB and must stay that way to avoid breaking the ELF format.
     if len(payload) > orig_size:
-        # Truncate to section size (kernel will re-create full DMEM at runtime)
         payload = payload[:orig_size]
     elif len(payload) < orig_size:
-        # Pad with zeros to section size
         payload = payload + b"\x00" * (orig_size - len(payload))
 
     gsp[sig_file_off : sig_file_off + len(payload)] = payload
 
-    # Ensure buffer is large enough for section headers if they're beyond payload
     required_size = e_shoff + len(shdrs)
     if len(gsp) < required_size:
         gsp.extend(b"\x00" * (required_size - len(gsp)))
 
-    # Write updated section headers back to original location in the file
     gsp[e_shoff : e_shoff + len(shdrs)] = shdrs
 
     Path(output_path).write_bytes(bytes(gsp))

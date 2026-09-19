@@ -1,10 +1,3 @@
-"""
-compute.py — Check and apply the compute unlock (SS0 + SS1).
-
-After the memory unlock (or independently), the SM clock cap can be
-removed by writing SS0 and SS1 to FEAT_OVR_SM_SPD registers.
-"""
-
 import logging
 import sys
 import os

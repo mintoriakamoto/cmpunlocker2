@@ -1,11 +1,3 @@
-"""
-memory.py — Check and apply the memory unlock (CFG1 + LMR).
-
-After the ROP chain opens the 4 PLM registers, the HBM controller
-accepts writes to CFG1 (geometry) and LMR (memory rank). This module
-performs those writes from the host driver in NS-mode.
-"""
-
 import logging
 import sys
 import os
@@ -18,7 +10,6 @@ log = logging.getLogger(__name__)
 
 
 def get_target_values(target: str = None):
-    """Return the (cfg1, lmr) target values for the given memory target."""
     if target is None:
         target = get('memory_unlock.default_target')
     targets = get('memory_unlock.targets')
@@ -28,7 +19,6 @@ def get_target_values(target: str = None):
 
 
 def is_memory_unlocked(pci_full: str, target: str = None) -> bool:
-    """Check if CFG1 and LMR are currently set to the target values."""
     cfg1_want, lmr_want = get_target_values(target)
     cfg1_addr = get('memory_unlock.cfg1.addr')
     lmr_addr  = get('memory_unlock.lmr.addr')
@@ -39,7 +29,6 @@ def is_memory_unlocked(pci_full: str, target: str = None) -> bool:
 
 
 def current_memory_config(pci_full: str) -> dict:
-    """Read the current CFG1 and LMR values and decode them."""
     cfg1_addr = get('memory_unlock.cfg1.addr')
     lmr_addr  = get('memory_unlock.lmr.addr')
     with Bar0(pci_full) as bar0:
@@ -57,21 +46,13 @@ def current_memory_config(pci_full: str) -> dict:
     total_gb = per_stack_gb * stacks
 
     return {
-        "cfg1": cfg1,
-        "lmr": lmr,
-        "strap": strap,
-        "feature": feature,
-        "per_stack_gb": per_stack_gb,
-        "stacks": stacks,
-        "total_gb": total_gb,
+        "cfg1": cfg1, "lmr": lmr,
+        "strap": strap, "feature": feature,
+        "per_stack_gb": per_stack_gb, "stacks": stacks, "total_gb": total_gb,
     }
 
 
 def apply_unlock(pci_full: str, target: str = None) -> tuple:
-    """Apply the memory unlock: write CFG1 and LMR via BAR0.
-
-    Returns (success, message).
-    """
     cfg1_want, lmr_want = get_target_values(target)
     cfg1_addr = get('memory_unlock.cfg1.addr')
     lmr_addr  = get('memory_unlock.lmr.addr')

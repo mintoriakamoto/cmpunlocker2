@@ -6,10 +6,6 @@ dmem_layout:
   bar0_mmap_size: 0x1000000
 
 # Community-verified unlock writes (from A100 80GB BAR0 dump analysis).
-# These values were empirically confirmed on a real A100 80GB → 40GB
-# unlock and ported to CMP 170HX by the kinako404 community.
-# Universal across all driver versions (580.x, 590-595.x, 610.x).
-# Hardware registers (CFG1/LMR) are driver-agnostic.
 host_bar0_writes:
   ss0:
     addr:  0x0082381C
@@ -47,44 +43,36 @@ memory_unlock:
     nativ_8gb:
       cfg1: 0x02440000
       lmr:  0x0000028A
-      note: "4 stacks × 2GB HBM2 = 8GB (CMP 170HX 4-stack variant, feature=0x00)"
+      note: "4 stacks x 2GB HBM2 = 8GB (CMP 170HX 4-stack variant, feature=0x00)"
     nativ_10gb:
       cfg1: 0x02449000
       lmr:  0x0000028A
-      note: "5 stacks × 2GB HBM2 = 10GB (CMP 170HX 5-stack variant, feature=0x90)"
+      note: "5 stacks x 2GB HBM2 = 10GB (CMP 170HX 5-stack variant, feature=0x90)"
     unlocked_32gb:
       cfg1: 0x02660000
       lmr:  0x0000028A
-      note: "4 stacks × 8GB HBM2e = 32GB (8GB model unlocked, feature=0x00)"
+      note: "4 stacks x 8GB HBM2e = 32GB (8GB model unlocked, feature=0x00)"
     unlocked_40gb:
       cfg1: 0x02669000
       lmr:  0x0000028A
-      note: "5 stacks × 8GB HBM2e = 40GB (10GB model, community-verified on A100)"
+      note: "5 stacks x 8GB HBM2e = 40GB (10GB model, community-verified on A100)"
     unlocked_64gb:
       cfg1: 0x02770000
       lmr:  0x0000028A
-      note: "4 stacks × 16GB HBM2e = 64GB (8GB model full capacity, feature=0x00)"
+      note: "4 stacks x 16GB HBM2e = 64GB (8GB model full capacity, feature=0x00)"
     unlocked_80gb:
       cfg1: 0x02779000
       lmr:  0x0000028A
-      note: "5 stacks × 16GB HBM2e = 80GB (10GB model full capacity, feature=0x90)"
+      note: "5 stacks x 16GB HBM2e = 80GB (10GB model full capacity, feature=0x90)"
   default_target: unlocked_40gb
 
-# Multi-device support with hardware variants (from ecosystem research)
-# Extended to: 170HX (GA100), 90HX (GH100), 50HX (GH100 derivative)
-#
-# CRITICAL: LMR value is hardware-variant-specific (from driver patch):
-#   8GB model (10de:20c2): LMR=0x0000020B (always, for all targets)
-#   10GB model (10de:2082): LMR=0x0000028A (always, for all targets)
-#   10de:20b0: assume 10GB variant (LMR=0x0000028A) until verified
 device_variants:
   "10de:20b0": { name: "CMP 170HX", arch: "GA100", hbm_model: "10gb", lmr: 0x0000028A, verified: true }
   "10de:20c2": { name: "CMP 170HX", arch: "GA100", hbm_model: "8gb",  lmr: 0x0000020B, verified: true }
   "10de:2082": { name: "CMP 170HX", arch: "GA100", hbm_model: "10gb", lmr: 0x0000028A, verified: true }
-  "10de:220d": { name: "CMP 90HX", arch: "GH100", verified: true }
-  "10de:2209": { name: "CMP 50HX", arch: "GH100", verified: true }
+  "10de:220d": { name: "CMP 90HX",  arch: "GH100", verified: true }
+  "10de:2209": { name: "CMP 50HX",  arch: "GH100", verified: true }
 
-# Driver compatibility matrix (from community testing across ecosystem)
 driver_compatibility:
   "580.x":
     note: "Original target, community-verified"
@@ -99,101 +87,56 @@ driver_compatibility:
     tested: ["610.43.03", "610.57.04"]
     verified: true
 
-# Optional feature unlocks (community guesses, best-effort)
 feature_unlocks:
-  # ----------------------------------------------------------------------
-  # COMMUNITY-VERIFIED values (from A100 BAR0 dump analysis, not guesses)
-  # ----------------------------------------------------------------------
   pcie_gen2:
     addr:  0x00088088
     value: 0x00000002
     note: "DEPRECATED: BAR0 alone doesn't work (needs 24-reg sequence). Using pcie_gen4_unlock.sh (setpci)"
-    # CRITICAL: BAR0 0x00088088 is correct address BUT still insufficient.
-    # Gen2 requires 24+ register writes in correct sequence (see buliaoyin pcie-gen2.patch).
-    # Pipeline uses pcie_gen4_unlock.sh (PCI Config Space via setpci) — verified working.
-    # However, BR04 bridge may reject Gen2 if BIOS/firmware doesn't support it.
   pcie_gen3:
     addr:  0x00088088
     value: 0x00000003
     note: "DEPRECATED: Correct addr 0x00088088 but needs 24-reg sequence. Use pcie_gen4_unlock.sh"
-    # Gen 3 (8.0 GT/s) requires full driver patch sequence like buliaoyin.
-    # BAR0 address corrected from 0x000088 to 0x00088088 but still incomplete.
   pcie_gen4:
     addr:  0x00088088
     value: 0x00000004
     note: "DEPRECATED: Correct addr 0x00088088 but needs 24-reg sequence. Use pcie_gen4_unlock.sh"
-    # Gen 4 (16.0 GT/s) requires full driver patch sequence like buliaoyin.
-    # BAR0 address corrected from 0x000088 to 0x00088088 but still incomplete.
   pcie_gen5:
     addr:  0x00088088
     value: 0x00000005
     note: "DEPRECATED: Correct addr 0x00088088 but needs 24-reg sequence. Use pcie_gen4_unlock.sh"
-    # Gen 5 (32.0 GT/s) requires full driver patch sequence like buliaoyin.
-    # BAR0 address corrected from 0x000088 to 0x00088088 but still incomplete.
-  nvlink_enable:
-    addr:  0x0088000C
-    value: 0x00000001
-    note: "NVLink enable (community guess, NOT verified)"
-    # NOTE: NVLink is disabled on CMP 170HX at the factory. The actual
-    # enable sequence requires ARC firmware coordination which we
-    # don't have. This is best-effort.
-  arc_mutex:
-    addr:  0x001180F8
-    value: 0x17100000
-    note: "ARC mutex top-nibble unlock (community guess, NOT verified)"
-    # NOTE: From the A100 BAR0 dump. Believed to unlock ARC for NVLink
-    # access. Not empirically verified on CMP 170HX.
-  ecc_enable:
-    addr:  0x00100110
-    value: 0x00000001
-    note: "ECC enable (community guess, NOT verified)"
-    # NOTE: ECC enable is typically a multi-bit field. This sets bit 0
-    # only. Real ECC enable may require more configuration.
-  ecc_scrub:
-    addr:  0x00100114
-    value: 0x00000010
-    note: "ECC scrub interval (community guess, NOT verified)"
 
-# PLM (Platform Lock Manager) registers — 11 registers must be opened.
-# Matches the driver patch (sec2-postbl-plm-ss-cfg.patch) exactly.
-# All 11 PLMs use the same all-1s values for both 40GB and 80GB targets.
-# The difference between 40GB and 80GB is only CFG1/LMR, not PLMs.
-#
-# PLM[0-7]:  Core registers (WPR_CFG, FBPA, WPR, FEAT, XVE, XVE_B, XVE_C, FEAT2)
-# PLM[8-10]: Extended registers (OPT_PLM, PJTAG_PLM, PJTAG_SEC_PLM)
-
-plm_table_40gb:  # For 10GB → 40GB unlock (all-1s, matches driver patch)
-  - { addr: 0x001FA7CC, value: 0xfffff0ff, name: "WPR_CFG" }
-  - { addr: 0x009A0148, value: 0xffffffff, name: "FBPA"     }
-  - { addr: 0x001FA7C4, value: 0xffffffff, name: "WPR"      }
-  - { addr: 0x00823804, value: 0xffffffff, name: "FEAT"     }
-  - { addr: 0x00088FF4, value: 0xffffffff, name: "XVE"      }
-  - { addr: 0x00088AB4, value: 0xffffffff, name: "XVE_B"    }
-  - { addr: 0x00088FF8, value: 0xffffffff, name: "XVE_C"    }
-  - { addr: 0x00823B00, value: 0xffffffff, name: "FEAT2"    }
+# PLM (Platform Lock Manager) registers - 11 registers must be opened.
+# CRITICAL: Use firmware-actual values - firmware has protection bits set in some registers.
+# Using 0xFFFFFFFF for FEAT/FEAT2 corrupts Falcon state, causing BooterLoad failure.
+# WPR_CFG/WPR=0x0004cb8f, FBPA/XVE=0xffffff8f, FEAT/FEAT2=0xfffffcee
+plm_table_40gb:
+  - { addr: 0x001FA7CC, value: 0x0004cb8f, name: "WPR_CFG" }
+  - { addr: 0x009A0148, value: 0xffffff8f, name: "FBPA"     }
+  - { addr: 0x001FA7C4, value: 0x0004cb8f, name: "WPR"      }
+  - { addr: 0x00823804, value: 0xfffffcee, name: "FEAT"     }
+  - { addr: 0x00088FF4, value: 0xffffff8f, name: "XVE"      }
+  - { addr: 0x00088AB4, value: 0xFFFFFFFF, name: "XVE_B"    }
+  - { addr: 0x00088FF8, value: 0xFFFFFFFF, name: "XVE_C"    }
+  - { addr: 0x00823B00, value: 0xfffffcee, name: "FEAT2"    }
   - { addr: 0x008200FC, value: 0xffffffff, name: "OPT_PLM"  }
   - { addr: 0x0000C840, value: 0xffffffff, name: "PJTAG_PLM" }
   - { addr: 0x0000C848, value: 0xffffffff, name: "PJTAG_SEC_PLM" }
 
-plm_table_80gb:  # For 10GB → 80GB unlock (all-1s, matches driver patch)
-  - { addr: 0x001FA7CC, value: 0xfffff0ff, name: "WPR_CFG" }
-  - { addr: 0x009A0148, value: 0xffffffff, name: "FBPA"     }
-  - { addr: 0x001FA7C4, value: 0xffffffff, name: "WPR"      }
-  - { addr: 0x00823804, value: 0xffffffff, name: "FEAT"     }
-  - { addr: 0x00088FF4, value: 0xffffffff, name: "XVE"      }
-  - { addr: 0x00088AB4, value: 0xffffffff, name: "XVE_B"    }
-  - { addr: 0x00088FF8, value: 0xffffffff, name: "XVE_C"    }
-  - { addr: 0x00823B00, value: 0xffffffff, name: "FEAT2"    }
+plm_table_80gb:  # Same firmware-actual values as 40gb - PLM values are capacity-independent
+  - { addr: 0x001FA7CC, value: 0x0004cb8f, name: "WPR_CFG" }
+  - { addr: 0x009A0148, value: 0xffffff8f, name: "FBPA"     }
+  - { addr: 0x001FA7C4, value: 0x0004cb8f, name: "WPR"      }
+  - { addr: 0x00823804, value: 0xfffffcee, name: "FEAT"     }
+  - { addr: 0x00088FF4, value: 0xffffff8f, name: "XVE"      }
+  - { addr: 0x00088AB4, value: 0xFFFFFFFF, name: "XVE_B"    }
+  - { addr: 0x00088FF8, value: 0xFFFFFFFF, name: "XVE_C"    }
+  - { addr: 0x00823B00, value: 0xfffffcee, name: "FEAT2"    }
   - { addr: 0x008200FC, value: 0xffffffff, name: "OPT_PLM"  }
   - { addr: 0x0000C840, value: 0xffffffff, name: "PJTAG_PLM" }
   - { addr: 0x0000C848, value: 0xffffffff, name: "PJTAG_SEC_PLM" }
 
 plm_table: plm_table_40gb
 
-# 24-DWORD ROP payload (community-verified on A100 80GB silicon).
-# Placed in the .fwsignature_ga100 ELF section. The BootROM loads it
-# into DMEM at offset 0x800 and executes it before signature check.
-# The chain performs a single BAR0 write at runtime.
 rop_payload:
   fill_dword:   0x000004a7
   header:       0x00000007

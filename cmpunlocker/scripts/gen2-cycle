@@ -1,0 +1,86 @@
+#!/bin/bash
+# Retrain CMP 170HX PCIe to Gen2. Must run with llama-server and Crucible OFF.
+# After success: start cmpunlocker + TENSELERATE. Do NOT start crucible-qwen or hermes-llama.
+set -uo pipefail
+
+LOG="/var/log/gen2-cycle.log"
+MAX_CYCLES="${1:-30}"
+GPU_BDF="0000:01:00.0"
+
+log() { echo "[$(date -Is)] $*" | tee -a "$LOG"; }
+
+check_gen2() {
+    local sta
+    sta=$(setpci -s "$GPU_BDF" CAP_EXP+12.w 2>/dev/null) || return 1
+    [[ "$sta" =~ ^[0-9a-fA-F]{4}$ ]] || return 1
+    echo $((0x${sta} & 0x0f))
+}
+
+stop_gpu_users() {
+    systemctl stop tenselerate-serve.service 2>/dev/null || true
+    systemctl stop hermes-llama.service 2>/dev/null || true
+    systemctl stop crucible-qwen.service 2>/dev/null || true
+    systemctl stop cmpunlocker.service 2>/dev/null || true
+    fuser -k 8082/tcp 8083/tcp 2>/dev/null || true
+    pkill -9 -f 'llama-server' 2>/dev/null || true
+    pkill -9 -f 'hermes-boot' 2>/dev/null || true
+    pkill -9 -f 'crucible-qwen' 2>/dev/null || true
+    nvidia-persistenced --kill 2>/dev/null || true
+    sleep 2
+    fuser -k /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia0 /dev/dri/* 2>/dev/null || true
+    sleep 1
+}
+
+start_after() {
+    modprobe nvidia_modeset 2>/dev/null || true
+    modprobe nvidia_drm 2>/dev/null || true
+    modprobe nvidia_uvm 2>/dev/null || true
+    systemctl start cmpunlocker.service 2>/dev/null || true
+    systemctl start tenselerate-serve.service 2>/dev/null || true
+}
+
+gen=$(check_gen2 2>/dev/null) || gen="?"
+if [[ "$gen" =~ ^[0-9]+$ ]] && (( gen >= 2 )); then
+    log "Already Gen$gen, skipping retrain."
+    start_after
+    exit 0
+fi
+
+log "=== gen2-cycle start (max=$MAX_CYCLES) ==="
+stop_gpu_users
+
+if lsmod | grep -q nvidia_uvm; then
+    log "WARN: nvidia_uvm still loaded, trying rmmod"
+    rmmod nvidia_uvm 2>/dev/null || true
+fi
+
+for ((i=1; i<=MAX_CYCLES; i++)); do
+    rmmod nvidia_uvm nvidia_drm nvidia_modeset nvidia 2>/dev/null || true
+    sleep 2
+    modprobe nvidia 2>/dev/null || true
+    sleep 1
+    nvidia-smi --query-gpu=memory.total --format=csv,noheader >/dev/null 2>&1 || true
+    sleep 2
+
+    rmmod nvidia_uvm nvidia_drm nvidia_modeset nvidia 2>/dev/null || true
+    sleep 2
+    modprobe nvidia 2>/dev/null || true
+    sleep 1
+    nvidia-smi --query-gpu=memory.total --format=csv,noheader >/dev/null 2>&1 || true
+    sleep 3
+
+    gen=$(check_gen2 2>/dev/null) || gen="?"
+    if [[ "$gen" =~ ^[0-9]+$ ]] && (( gen >= 2 )); then
+        log "SUCCESS at cycle $i: Gen$gen"
+        start_after
+        exit 0
+    fi
+    if (( i % 5 == 0 )); then
+        log "cycle $i: Gen$gen"
+    fi
+done
+
+gen=$(check_gen2 2>/dev/null) || gen="?"
+log "=== gen2-cycle done after $MAX_CYCLES cycles: Gen$gen (not Gen2) ==="
+start_after
+exit 1
