@@ -2,7 +2,7 @@
 pipeline.py — Run the full unlock sequence.
 
 Mirrors the open-gpu-kernel-modules-610.43.03 fork's SEC2 post-bootloader
-timing unlock exactly, extended to 11 PLM registers:
+timing unlock exactly, extended to 11 PLM registers.
 
   1. Stop display manager, unload nvidia modules
   2. Find GSP firmware and the stock signature section
@@ -10,19 +10,16 @@ timing unlock exactly, extended to 11 PLM registers:
   4. For each of 11 PLM registers (WPR_CFG, FBPA, WPR, FEAT, XVE, XVE_B, XVE_C, FEAT2, OPT_PLM, PJTAG_PLM, PJTAG_SEC_PLM):
      a. Refill the ROP payload with the target address/value
      b. Patch the GSP firmware .fwsignature_ga100 section
-     c. modprobe nvidia → triggers kgspBootGspRm → kgspExecuteBooterLoad
+     c. modprobe nvidia -> triggers kgspBootGspRm -> kgspExecuteBooterLoad
      d. Verify the PLM register was opened (loop up to 2 times)
   5. After all PLMs are open, write the memory unlock values (CFG1, LMR)
   6. Write the compute unlock values (SS0, SS1) via BAR0
-  7. Restore the original GSP signature (so the driver doesn't detect
-     tampering)
-  8. modprobe nvidia to reload with the original signature but the
-     unlocked memory configuration still in place
+  7. Restore the original GSP signature
+  8. modprobe nvidia to reload with the original signature
 
-The result: full SM clock + full memory capacity, with the GSP
-firmware integrity preserved. The unlock is volatile (lost on power
-cycle) but reapplied automatically by the daemon on every driver
-reload.
+CRITICAL: PLM values must be firmware-actual, not 0xffffffff.
+FEAT/FEAT2 = 0xfffffcee (firmware clears bits 0,8,9 as protection markers).
+Using 0xffffffff corrupts Falcon state and triggers the 4-try lockout.
 """
 
 import glob
@@ -58,7 +55,6 @@ def _find_gsp() -> str:
 
 
 def _save_stock_signature(gsp_path: str) -> bytes:
-    """Read and return the original .fwsignature_ga100 section content."""
     import struct
     sig_name = get('elf.signature_section').encode()
     gsp = Path(gsp_path).read_bytes()
@@ -91,10 +87,7 @@ def _save_stock_signature(gsp_path: str) -> bytes:
 
 def _open_plm_register(pci_full: str, gsp_path: str, stock_sig: bytes,
                          write_addr: int, write_value: int, reg_name: str) -> bool:
-    """Try to open one PLM register by running the ROP chain.
-
-    The chain performs a single BAR0 write to the target address.
-    """
+    """Try to open one PLM register by running the ROP chain."""
     payload = fill_payload(write_addr, write_value)
     backup = gsp_path + ".cmpunlocker.bak"
     patched = gsp_path + ".cmpunlocker.patched"
@@ -105,7 +98,6 @@ def _open_plm_register(pci_full: str, gsp_path: str, stock_sig: bytes,
     for attempt in range(2):
         aggressive_unload()
 
-        # FLR reset BEFORE load — clean GPU state before exploit
         if not flr_reset(pci_full):
             log.warning("[%s] FLR failed on attempt %d, trying without", pci_full, attempt + 1)
 
@@ -117,8 +109,7 @@ def _open_plm_register(pci_full: str, gsp_path: str, stock_sig: bytes,
             with Bar0(pci_full) as bar0:
                 actual = bar0.rd32(write_addr)
         except RuntimeError as e:
-            log.error("[%s] BAR0 access failed (attempt %d): %s",
-                      pci_full, attempt + 1, e)
+            log.error("[%s] BAR0 access failed (attempt %d): %s", pci_full, attempt + 1, e)
             continue
 
         if actual == write_value:
@@ -132,7 +123,6 @@ def _open_plm_register(pci_full: str, gsp_path: str, stock_sig: bytes,
 
 
 def _write_bar0(pci_full: str, addr: int, value: int, label: str) -> bool:
-    """Write a value to BAR0 and verify it stuck."""
     from payload.bar0 import Bar0
     try:
         with Bar0(pci_full) as bar0:
@@ -145,50 +135,29 @@ def _write_bar0(pci_full: str, addr: int, value: int, label: str) -> bool:
     if actual == value:
         log.info("[%s] %s = 0x%08x OK", pci_full, label, value)
         return True
-    log.warning("[%s] %s write failed (wrote 0x%08x, got 0x%08x)",
-                pci_full, label, value, actual)
+    log.warning("[%s] %s write failed (wrote 0x%08x, got 0x%08x)", pci_full, label, value, actual)
     return False
 
 
 def _apply_pcie_gen2_setpci(pci_full: str) -> bool:
-    """Apply PCIe Gen2 unlock via pcie_gen4_unlock.sh (PCI Config Space via setpci).
-
-    The BAR0 write method (0x000088 = 0x00000002) does NOT work.
-    The working method uses setpci to access PCI Config Space registers directly.
-
-    The pcie_gen4_unlock.sh script auto-detects root complex capability and
-    negotiates Gen2-Gen5, falling back to Gen2 if higher speeds aren't supported.
-    """
-    import subprocess
-
-    # Find the script (relative to this file's location)
+    """Apply PCIe Gen2 unlock via pcie_gen4_unlock.sh (PCI Config Space via setpci)."""
     script_dir = Path(__file__).parent.parent / "scripts"
     script_path = script_dir / "pcie_gen4_unlock.sh"
 
     if not script_path.exists():
-        log.warning("[%s] pcie_gen4_unlock.sh not found at %s, skipping setpci Gen2",
-                   pci_full, script_path)
+        log.warning("[%s] pcie_gen4_unlock.sh not found, skipping Gen2", pci_full)
         return False
 
     try:
-        # Run as root (will prompt for sudo if needed)
         result = subprocess.run(
             ["sudo", str(script_path), pci_full],
-            capture_output=True,
-            text=True,
-            timeout=30
+            capture_output=True, text=True, timeout=30
         )
-
         if result.returncode == 0:
             log.info("[%s] pcie_gen4_unlock.sh succeeded", pci_full)
-            log.debug("[%s] Output:\n%s", pci_full, result.stdout)
             return True
-        else:
-            log.warning("[%s] pcie_gen4_unlock.sh failed (exit %d)",
-                       pci_full, result.returncode)
-            log.debug("[%s] stderr:\n%s", pci_full, result.stderr)
-            return False
-
+        log.warning("[%s] pcie_gen4_unlock.sh failed (exit %d)", pci_full, result.returncode)
+        return False
     except subprocess.TimeoutExpired:
         log.error("[%s] pcie_gen4_unlock.sh timed out", pci_full)
         return False
@@ -199,14 +168,7 @@ def _apply_pcie_gen2_setpci(pci_full: str) -> bool:
 
 def run_full_unlock(pci_full: str, gsp_path: str = None,
                      target: str = None) -> bool:
-    """Run the full unlock pipeline (mirrors modified driver).
-
-    Args:
-        pci_full: PCI BDF address (e.g. 0000:01:00.0)
-        gsp_path: Path to GSP firmware (auto-detected if None)
-        target: Memory target (e.g. 'unlocked_40gb')
-    """
-    # Preflight validation: catch common issues early
+    """Run the full unlock pipeline."""
     try:
         run_preflight(pci_full)
     except PrefightError as e:
@@ -224,7 +186,6 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
     log.info("[%s] GSP firmware: %s", pci_full, gsp_path)
     log.info("[%s] Target: %s", pci_full, target)
 
-    log.info("[%s] Stopping display manager and unloading modules", pci_full)
     stop_display_manager()
     unload_modules()
 
@@ -232,7 +193,6 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
         shutil.copy2(gsp_path, backup)
         log.info("[%s] GSP backup written to %s", pci_full, backup)
 
-    log.info("[%s] Saving stock GSP signature", pci_full)
     stock_sig = _save_stock_signature(gsp_path)
 
     plm_table = get('plm_table_40gb')
@@ -247,7 +207,6 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
     wpr2_lo_val = get('host_bar0_writes.wpr2_lo.value')
     wpr2_hi_val = get('host_bar0_writes.wpr2_hi.value')
     try:
-        from payload.bar0 import Bar0
         with Bar0(pci_full) as bar0:
             saved_wpr2_lo = bar0.rd32(wpr2_lo_addr)
             saved_wpr2_hi = bar0.rd32(wpr2_hi_addr)
@@ -255,12 +214,9 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
     except Exception:
         saved_wpr2_lo = wpr2_lo_val
         saved_wpr2_hi = wpr2_hi_val
-        log.info("[%s] Using default WPR2: lo=0x%08x hi=0x%08x", pci_full, saved_wpr2_lo, saved_wpr2_hi)
 
     for entry in plm_table:
-        # Restore WPR2 before each PLM attempt (matches driver patch)
         try:
-            from payload.bar0 import Bar0
             with Bar0(pci_full) as bar0:
                 bar0.wr32(wpr2_lo_addr, saved_wpr2_lo)
                 bar0.wr32(wpr2_hi_addr, saved_wpr2_hi)
@@ -276,9 +232,7 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
             log.warning("[%s] Failed to open %s (0x%08x), continuing with partial PLM state",
                         pci_full, entry['name'], entry['addr'])
 
-    # Restore WPR2 after PLM loop (matches driver patch)
     try:
-        from payload.bar0 import Bar0
         with Bar0(pci_full) as bar0:
             bar0.wr32(wpr2_lo_addr, saved_wpr2_lo)
             bar0.wr32(wpr2_hi_addr, saved_wpr2_hi)
@@ -290,101 +244,65 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
         log.error("[%s] No PLM registers opened, aborting", pci_full)
         return False
 
-    log.info("[%s] %d of %d PLM registers opened, proceeding to write memory/compute",
-             pci_full, plm_open_count, len(plm_table))
+    log.info("[%s] %d of %d PLM registers opened", pci_full, plm_open_count, len(plm_table))
 
     targets = get('memory_unlock.targets')
     mem = targets[target]
 
-    # Auto-detect device ID and select correct LMR value
-    # CRITICAL: LMR is hardware-variant-specific (from driver patch):
-    #   8GB model (10de:20c2): LMR=0x0000020B
-    #   10GB model (10de:2082): LMR=0x0000028A
     device_variants = get('device_variants')
-    lmr_value = mem['lmr']  # fallback to target default
-    detected_devid = None
+    lmr_value = mem['lmr']
     for devid_key, variant in device_variants.items():
         if pci_full.endswith(devid_key.split(':')[1]) or devid_key in pci_full:
             if 'lmr' in variant:
                 lmr_value = variant['lmr']
-                detected_devid = devid_key
-                log.info("[%s] Detected device %s (%s), using LMR=0x%08x",
-                         pci_full, devid_key, variant.get('name', '?'), lmr_value)
+                log.info("[%s] Detected device %s, using LMR=0x%08x",
+                         pci_full, devid_key, lmr_value)
             break
 
-    if detected_devid is None:
-        log.warning("[%s] Could not detect device variant, using default LMR=0x%08x",
-                    pci_full, lmr_value)
+    _write_bar0(pci_full, get('host_bar0_writes.wpr2_lo.addr'),
+                get('host_bar0_writes.wpr2_lo.value'), 'WPR2_LO')
+    _write_bar0(pci_full, get('host_bar0_writes.wpr2_hi.addr'),
+                get('host_bar0_writes.wpr2_hi.value'), 'WPR2_HI')
 
-    # Initialize WPR2 registers (may be required before CFG1 writes stick)
-    log.info("[%s] Initializing WPR2 memory protection registers", pci_full)
-    wpr2_lo_ok = _write_bar0(pci_full, get('host_bar0_writes.wpr2_lo.addr'),
-                              get('host_bar0_writes.wpr2_lo.value'), 'WPR2_LO')
-    wpr2_hi_ok = _write_bar0(pci_full, get('host_bar0_writes.wpr2_hi.addr'),
-                              get('host_bar0_writes.wpr2_hi.value'), 'WPR2_HI')
-
-    # CRITICAL: Firmware signals the correct LMR value by returning it on read.
-    # Must keep BAR0 open for atomic read-write sequence (firmware expects same mmap context).
-    # Sequence: read LMR → write LMR (firmware-signaled) → write CFG1 target.
     cfg1_addr = get('memory_unlock.cfg1.addr')
     lmr_addr = get('memory_unlock.lmr.addr')
-
-    from payload.bar0 import Bar0
 
     log.info("[%s] Writing memory unlock: CFG1=0x%08x LMR=0x%08x",
              pci_full, mem['cfg1'], lmr_value)
 
     with Bar0(pci_full) as bar0:
-        # Step 1: Read firmware-signaled LMR value (this is the UNLOCK value)
         firmware_lmr = bar0.rd32(lmr_addr)
-        log.info("[%s] Firmware-signaled LMR: 0x%08x (unlock key)", pci_full, firmware_lmr)
+        log.info("[%s] Firmware-signaled LMR: 0x%08x", pci_full, firmware_lmr)
 
-        # Step 2: Write LMR (device-variant-specific, NOT firmware-signaled)
-        # The driver patch uses a fixed LMR per hardware variant, not the firmware readback.
-        log.info("[%s] Writing LMR=0x%08x (device-variant-specific)", pci_full, lmr_value)
         bar0.wr32(lmr_addr, lmr_value)
         lmr_check = bar0.rd32(lmr_addr)
         lmr_ok = lmr_check == lmr_value
-        if lmr_ok:
-            log.info("[%s] LMR_UNLOCK = 0x%08x OK", pci_full, lmr_check)
-        else:
+        if not lmr_ok:
             log.warning("[%s] LMR_UNLOCK failed (wrote 0x%08x, got 0x%08x)",
                        pci_full, lmr_value, lmr_check)
 
-        # Step 3: Write CFG1 target (while BAR0 still open, same mmap context)
-        log.info("[%s] Writing CFG1 target=0x%08x (atomic with LMR)", pci_full, mem['cfg1'])
         bar0.wr32(cfg1_addr, mem['cfg1'])
         cfg1_check = bar0.rd32(cfg1_addr)
         cfg1_ok = cfg1_check == mem['cfg1']
-        if cfg1_ok:
-            log.info("[%s] CFG1 = 0x%08x OK", pci_full, cfg1_check)
-        else:
+        if not cfg1_ok:
             log.warning("[%s] CFG1 write failed (wrote 0x%08x, got 0x%08x)",
                        pci_full, mem['cfg1'], cfg1_check)
 
-    ss0_addr = get('host_bar0_writes.ss0.addr')
-    ss0_val  = get('host_bar0_writes.ss0.value')
-    ss1_addr = get('host_bar0_writes.ss1.addr')
-    ss1_val  = get('host_bar0_writes.ss1.value')
-    log.info("[%s] Writing compute unlock: SS0=0x%08x SS1=0x%08x",
-             pci_full, ss0_val, ss1_val)
-    ss0_ok = _write_bar0(pci_full, ss0_addr, ss0_val, 'SS0')
-    ss1_ok = _write_bar0(pci_full, ss1_addr, ss1_val, 'SS1')
+    ss0_ok = _write_bar0(pci_full, get('host_bar0_writes.ss0.addr'),
+                         get('host_bar0_writes.ss0.value'), 'SS0')
+    ss1_ok = _write_bar0(pci_full, get('host_bar0_writes.ss1.addr'),
+                         get('host_bar0_writes.ss1.value'), 'SS1')
 
-    log.info("[%s] Applying optional feature unlocks (PCIe, NVLink, ECC)", pci_full)
     from unlock.features import apply_feature_unlocks
     feat_results = apply_feature_unlocks(pci_full)
     feat_ok = all(r.get("stuck", False) for r in feat_results.values()) if feat_results else True
 
     # CRITICAL FIX: BAR0 Gen2 write (0x000088) doesn't work.
-    # Use pcie_gen4_unlock.sh for proper PCI Config Space Gen2 unlock via setpci
+    # Use pcie_gen4_unlock.sh for proper PCI Config Space Gen2 unlock via setpci.
     log.info("[%s] Applying PCIe Gen2 via pcie_gen4_unlock.sh (PCI Config Space)", pci_full)
-    gen2_script_ok = _apply_pcie_gen2_setpci(pci_full)
+    gen2_ok = _apply_pcie_gen2_setpci(pci_full)
 
-    log.info("[%s] Restoring original GSP signature", pci_full)
     shutil.copy2(backup, gsp_path)
-
-    log.info("[%s] Reloading driver with restored signature", pci_full)
     load_module()
     time.sleep(3)
 
@@ -401,10 +319,7 @@ def run_full_unlock(pci_full: str, gsp_path: str = None,
 
 def main() -> None:
     import argparse
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description="CMP 170HX unlock pipeline")
     parser.add_argument("pci", nargs="?", help="PCI BDF address")
     parser.add_argument("gsp", nargs="?", help="GSP firmware path")
