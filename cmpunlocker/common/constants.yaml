@@ -5,32 +5,31 @@ dmem_layout:
   canary:        0xFACEB13D
   bar0_mmap_size: 0x1000000
 
-# Community-verified unlock writes (from A100 80GB BAR0 dump analysis).
 host_bar0_writes:
   ss0:
     addr:  0x0082381C
     value: 0x88888888
-    note: "FEAT_OVR_SM_SPD (all SMs max speed) — community-verified"
+    note: "FEAT_OVR_SM_SPD (all SMs max speed)"
   ss1:
     addr:  0x00823820
     value: 0x00000008
-    note: "FEAT_OVR_SM_SPD_1 (IMLA4 override) — community-verified"
+    note: "FEAT_OVR_SM_SPD_1 (IMLA4 override)"
   feat_ovr_plm:
     addr:  0x00823804
     value: 0xFFFFFFFF
-    note: "Feature override PLM (used by exploit simulator)"
+    note: "Feature override PLM"
   wpr2_lo:
     addr:  0x001FA824
     value: 0x1FFFFE00
-    note: "WPR2 lo teardown — community-verified"
+    note: "WPR2 lo teardown"
   wpr2_hi:
     addr:  0x001FA828
     value: 0x00000000
-    note: "WPR2 hi teardown — community-verified"
+    note: "WPR2 hi teardown"
   reset_plm:
     addr:  0x008403C4
     value: 0x000000FF
-    note: "resetPLM open — community-verified"
+    note: "resetPLM open"
 
 memory_unlock:
   cfg1:
@@ -43,28 +42,24 @@ memory_unlock:
     nativ_8gb:
       cfg1: 0x02440000
       lmr:  0x0000028A
-      note: "4 stacks x 2GB HBM2 = 8GB (CMP 170HX 4-stack variant, feature=0x00)"
     nativ_10gb:
       cfg1: 0x02449000
       lmr:  0x0000028A
-      note: "5 stacks x 2GB HBM2 = 10GB (CMP 170HX 5-stack variant, feature=0x90)"
     unlocked_32gb:
       cfg1: 0x02660000
       lmr:  0x0000028A
-      note: "4 stacks x 8GB HBM2e = 32GB (8GB model unlocked, feature=0x00)"
     unlocked_40gb:
       cfg1: 0x02669000
       lmr:  0x0000028A
-      note: "5 stacks x 8GB HBM2e = 40GB (10GB model, community-verified on A100)"
+      note: "5 stacks x 8GB HBM2e = 40GB"
     unlocked_64gb:
       cfg1: 0x02770000
       lmr:  0x0000028A
-      note: "4 stacks x 16GB HBM2e = 64GB (8GB model full capacity, feature=0x00)"
     unlocked_80gb:
       cfg1: 0x02779000
-      lmr:  0x0000028A
-      note: "5 stacks x 16GB HBM2e = 80GB (10GB model full capacity, feature=0x90)"
-  default_target: unlocked_40gb
+      lmr:  0x0000028B
+      note: "5 stacks x 16GB HBM2e = 80GB. LMR=0x28B per ggualerz/cmp170hx10g-to-80g research - bit 0 differs from 40GB value (0x28A)"
+  default_target: unlocked_80gb
 
 device_variants:
   "10de:20b0": { name: "CMP 170HX", arch: "GA100", hbm_model: "10gb", lmr: 0x0000028A, verified: true }
@@ -79,11 +74,11 @@ driver_compatibility:
     tested: ["580.105.08", "580.159.03"]
     verified: true
   "590-595.x":
-    note: "Extended support (pearlfortune testing)"
+    note: "Extended support"
     tested: ["590.48.01", "595.71.05"]
     verified: true
   "610.x":
-    note: "Newer driver support (Cyridd/pearlfortune)"
+    note: "Newer driver support"
     tested: ["610.43.03", "610.57.04"]
     verified: true
 
@@ -91,24 +86,23 @@ feature_unlocks:
   pcie_gen2:
     addr:  0x00088088
     value: 0x00000002
-    note: "DEPRECATED: BAR0 alone doesn't work (needs 24-reg sequence). Using pcie_gen4_unlock.sh (setpci)"
+    note: "DEPRECATED: BAR0 alone doesn't work (needs 24-reg sequence)"
   pcie_gen3:
     addr:  0x00088088
     value: 0x00000003
-    note: "DEPRECATED: Correct addr 0x00088088 but needs 24-reg sequence. Use pcie_gen4_unlock.sh"
+    note: "DEPRECATED: needs 24-reg sequence"
   pcie_gen4:
     addr:  0x00088088
     value: 0x00000004
-    note: "DEPRECATED: Correct addr 0x00088088 but needs 24-reg sequence. Use pcie_gen4_unlock.sh"
+    note: "DEPRECATED: needs 24-reg sequence"
   pcie_gen5:
     addr:  0x00088088
     value: 0x00000005
-    note: "DEPRECATED: Correct addr 0x00088088 but needs 24-reg sequence. Use pcie_gen4_unlock.sh"
+    note: "DEPRECATED: needs 24-reg sequence"
 
-# PLM (Platform Lock Manager) registers - 11 registers must be opened.
-# CRITICAL: Use firmware-actual values - firmware has protection bits set in some registers.
-# Using 0xFFFFFFFF for FEAT/FEAT2 corrupts Falcon state, causing BooterLoad failure.
-# WPR_CFG/WPR=0x0004cb8f, FBPA/XVE=0xffffff8f, FEAT/FEAT2=0xfffffcee
+# PLM values are IDENTICAL for 40gb and 80gb.
+# The only difference between targets is CFG1/LMR, NOT PLM values.
+# CRITICAL: Use firmware-actual values. 0xffffffff for FEAT/FEAT2 corrupts Falcon.
 plm_table_40gb:
   - { addr: 0x001FA7CC, value: 0x0004cb8f, name: "WPR_CFG" }
   - { addr: 0x009A0148, value: 0xffffff8f, name: "FBPA"     }
@@ -122,7 +116,7 @@ plm_table_40gb:
   - { addr: 0x0000C840, value: 0xffffffff, name: "PJTAG_PLM" }
   - { addr: 0x0000C848, value: 0xffffffff, name: "PJTAG_SEC_PLM" }
 
-plm_table_80gb:  # Same firmware-actual values as 40gb - PLM values are capacity-independent
+plm_table_80gb:  # Same values as 40gb - PLM values are capacity-independent
   - { addr: 0x001FA7CC, value: 0x0004cb8f, name: "WPR_CFG" }
   - { addr: 0x009A0148, value: 0xffffff8f, name: "FBPA"     }
   - { addr: 0x001FA7C4, value: 0x0004cb8f, name: "WPR"      }
