@@ -172,4 +172,4 @@ gpu:
 
 elf:
   header_magic: 0x7F454C46
-  signature_section: ".fwsignature_ga100"
+  signature_section: ".fwsignature_ga10x"
