@@ -44,7 +44,7 @@ from payload.bar0 import Bar0
 
 log = logging.getLogger(__name__)
 
-_GSP_GLOB = "/lib/firmware/nvidia/*/gsp_tu10x.bin"
+_GSP_GLOB = "/lib/firmware/nvidia/*/gsp_ga10x.bin"
 
 
 def _find_gsp() -> str:
